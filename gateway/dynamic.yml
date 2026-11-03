@@ -1,0 +1,68 @@
+# API Gateway (Traefik): routing per prefisso verso i servizi e rate limit.
+# Ogni servizio verifica comunque la firma del JWT; gli endpoint /api/v1/internal/* non sono esposti.
+http:
+  middlewares:
+    rate-limit:
+      rateLimit:
+        average: 60      # richieste al minuto per IP (in produzione: per utente, via header)
+        period: 1m
+        burst: 30
+    block-internal:
+      replacePathRegex:
+        regex: "^/api/v1/internal/.*"
+        replacement: "/not-found"
+
+  routers:
+    excluded-stores:
+      rule: "PathPrefix(`/api/v1/users/me/excluded-stores`)"
+      service: store
+      priority: 100
+      middlewares: [rate-limit]
+    stats:
+      rule: "PathPrefix(`/api/v1/users/me/stats`)"
+      service: analytics
+      priority: 100
+      middlewares: [rate-limit]
+    product-prices:
+      rule: "PathRegexp(`^/api/v1/products/[^/]+/prices`)"
+      service: pricing
+      priority: 100
+      middlewares: [rate-limit]
+    auth:
+      rule: "PathPrefix(`/api/v1/auth`)"
+      service: auth
+      middlewares: [rate-limit]
+    users:
+      rule: "PathPrefix(`/api/v1/users`)"
+      service: user
+      middlewares: [rate-limit]
+    stores:
+      rule: "PathPrefix(`/api/v1/stores`)"
+      service: store
+      middlewares: [rate-limit]
+    catalog:
+      rule: "PathPrefix(`/api/v1/products`) || PathPrefix(`/api/v1/categories`)"
+      service: catalog
+      middlewares: [rate-limit]
+    lists:
+      rule: "PathPrefix(`/api/v1/lists`)"
+      service: list
+      middlewares: [rate-limit]
+    comparisons:
+      rule: "PathPrefix(`/api/v1/comparisons`)"
+      service: pricing
+      middlewares: [rate-limit]
+    internal-blocked:
+      rule: "PathPrefix(`/api/v1/internal`)"
+      service: auth
+      priority: 1000
+      middlewares: [block-internal]
+
+  services:
+    auth:      { loadBalancer: { servers: [{ url: "http://auth:3000" }] } }
+    user:      { loadBalancer: { servers: [{ url: "http://user:3000" }] } }
+    store:     { loadBalancer: { servers: [{ url: "http://store:3000" }] } }
+    catalog:   { loadBalancer: { servers: [{ url: "http://catalog:3000" }] } }
+    list:      { loadBalancer: { servers: [{ url: "http://list:3000" }] } }
+    pricing:   { loadBalancer: { servers: [{ url: "http://pricing:3000" }] } }
+    analytics: { loadBalancer: { servers: [{ url: "http://analytics:3000" }] } }

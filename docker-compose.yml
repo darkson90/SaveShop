@@ -1,0 +1,116 @@
+# Ambiente di sviluppo completo: gateway, 7 microservizi Node, ingestion Python,
+# PostgreSQL (un database per servizio), RabbitMQ e Redis.
+#   ./scripts/gen-keys.sh && docker compose up --build
+# API su http://localhost:8080/api/v1, console RabbitMQ su http://localhost:15672
+
+x-node-service: &node-service
+  build:
+    context: .
+    dockerfile: docker/node.Dockerfile
+  restart: unless-stopped
+  depends_on:
+    postgres: { condition: service_healthy }
+    rabbitmq: { condition: service_healthy }
+  volumes:
+    - ./keys/jwt-public.pem:/run/keys/jwt-public.pem:ro
+
+services:
+  gateway:
+    image: traefik:v3.1
+    command:
+      - --providers.file.filename=/etc/traefik/dynamic.yml
+      - --entrypoints.web.address=:8080
+      - --accesslog=true
+    ports: ["8080:8080"]
+    volumes:
+      - ./gateway/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    depends_on: [auth, user, store, catalog, list, pricing, analytics]
+
+  auth:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: auth } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/auth_db
+      JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
+    volumes:
+      - ./keys/jwt-public.pem:/run/keys/jwt-public.pem:ro
+      - ./keys/jwt-private.pem:/run/keys/jwt-private.pem:ro
+
+  user:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: user } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/user_db
+      LOYALTY_KEY: ${LOYALTY_KEY:-dev-only-loyalty-key-change-me}
+
+  store:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: store } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/store_db
+
+  catalog:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: catalog } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/catalog_db
+
+  list:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: list } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/list_db
+
+  pricing:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: pricing } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/pricing_db
+      REDIS_URL: redis://redis:6379/0
+
+  analytics:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: analytics } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/analytics_db
+      REDIS_URL: redis://redis:6379/1
+
+  ingestion:
+    build: ./services/ingestion
+    environment:
+      AMQP_URL: amqp://guest:guest@rabbitmq:5672
+      INGESTION_MODE: loop        # "once" per una singola esecuzione (CronJob in produzione)
+      INGESTION_INTERVAL_HOURS: "24"
+    depends_on:
+      rabbitmq: { condition: service_healthy }
+      pricing: { condition: service_started }
+
+  postgres:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: spesa
+      POSTGRES_PASSWORD: spesa
+      POSTGRES_DB: postgres
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init-databases.sql:/docker-entrypoint-initdb.d/01-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spesa"]
+      interval: 5s
+      retries: 20
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports: ["5672:5672", "15672:15672"]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+
+volumes:
+  pgdata:

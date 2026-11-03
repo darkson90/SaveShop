@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+keys/*.pem
+__pycache__/
+*.pyc
+.venv/
+
+# Flutter
+app/.dart_tool/
+app/build/
+app/.flutter-plugins*
+app/ios/Pods/
+app/pubspec.lock
+.logs/

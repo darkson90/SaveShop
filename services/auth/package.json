@@ -1,0 +1,16 @@
+{
+  "name": "@spesa/auth",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@node-rs/argon2": "^2.0.0",
+    "@spesa/common": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0"
+  }
+}
