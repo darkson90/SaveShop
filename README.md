@@ -18,7 +18,7 @@ spesa-smart/
 │   ├── user/             # profilo, raggio, fidelity card cifrate (AES-256-GCM)
 │   ├── store/            # insegne, punti vendita (PostGIS), blacklist utente
 │   ├── catalog/          # prodotti, categorie, sinonimi, autocompletamento (pg_trgm)
-│   ├── list/             # liste, parser "2 latte", frequenze, chiusura spesa
+│   ├── list/             # liste (anche condivise, in tempo reale), parser "2 latte", scontrini, chiusura spesa
 │   ├── pricing/          # prezzi correnti, motore di confronto 1/2 negozi e per articolo
 │   ├── analytics/        # storico acquisti e metriche del profilo
 │   ├── notification/     # offerte sui prodotti frequenti: push FCM e casella "Offerte per te"
@@ -80,9 +80,9 @@ Firebase. Senza questa configurazione l'app funziona e le offerte restano nella 
 "Offerte per te" (icona nella barra della lista). Lato server, montare l'account di servizio
 Firebase e impostare `FCM_SERVICE_ACCOUNT_FILE` nel Notification Service: senza, le push vanno nel log.
 
-Schermate: Lista (inserimento rapido, chip "Compri spesso", +/−, swipe per eliminare), Confronto
+Schermate: Lista (inserimento rapido, chip "Compri spesso", +/−, swipe per eliminare, condivisione), Confronto
 (1 negozio, 2 negozi, per articolo; swipe per escludere un negozio), Dettaglio negozio ("Ho fatto la
-spesa qui"), Negozi esclusi, Profilo (risparmio totale, risparmio medio, top 3, ciambella per
+spesa qui" con scansione dello scontrino), Condividi, Scontrino, Offerte per te, Negozi esclusi, Profilo (risparmio totale, risparmio medio, top 3, ciambella per
 categoria, filtro periodo), Impostazioni (raggio, fidelity card, logout, eliminazione account).
 
 ## Come funziona
@@ -114,6 +114,22 @@ categoria, filtro periodo), Impostazioni (raggio, fidelity card, logout, elimina
 | PurchaseCompleted | list | analytics |
 | PricesUpdated | ingestion | pricing, notification |
 
+## Liste condivise e scontrino (v1.2)
+
+- **Condivisione**: il proprietario genera un codice di 6 caratteri valido 48 ore (`POST /lists/{id}/invites`);
+  chi lo riceve entra con `POST /lists/join` e può modificare la lista, fino a 5 membri. Solo il
+  proprietario elimina la lista, crea inviti e rimuove membri; gli altri possono uscire.
+- **Tempo reale**: `GET /lists/{id}/live` (WebSocket, header `Authorization`) invia un segnale a ogni
+  modifica (`item.added`, `item.updated`, `item.removed`, `list.renamed`, `list.purchased`,
+  `members.changed`). Le repliche del List Service si scambiano i segnali su RabbitMQ (`ListChanged`,
+  non persistente), quindi funziona anche con più istanze. Il client ricarica la lista: il server resta
+  l'unica fonte di verità e un segnale perso non crea incoerenze.
+- **Scontrino**: il telefono legge il testo con ML Kit (la foto non lascia il dispositivo) e lo invia a
+  `POST /lists/{id}/receipt`. Il server riconosce righe prodotto, quantità ("2 x 1,29"), pesi
+  ("0,534 kg x 1,89"), sconti e totale, e abbina ogni riga a un articolo (sinonimi del catalogo +
+  somiglianza del testo). L'utente corregge gli abbinamenti e chiude la spesa con `paidPrices`: il
+  risparmio si calcola sui prezzi pagati davvero invece che sui listini.
+
 ## Endpoint aggiuntivi rispetto alle specifiche
 
 - `GET /lists/frequent-products`: alimenta i chip "Compri spesso".
@@ -121,6 +137,8 @@ categoria, filtro periodo), Impostazioni (raggio, fidelity card, logout, elimina
 - `PUT /notifications/devices`, `DELETE /notifications/devices/{token}`: token push del dispositivo.
 - `GET` / `PATCH /notifications/preferences`: consenso alle offerte.
 - `GET /notifications`, `POST /notifications/read`: casella "Offerte per te".
+- `POST /lists/{id}/invites`, `POST /lists/join`, `GET /lists/{id}/members`, `DELETE /lists/{id}/members/{userId}`.
+- `GET /lists/{id}/live` (WebSocket) e `POST /lists/{id}/receipt`; `POST /lists/{id}/purchase` accetta `paidPrices`.
 
 ## Differenze dalle specifiche da conoscere
 
@@ -143,14 +161,24 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
 
 ## Stato della verifica
 
-- Backend: compilato e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e Redis; 22 unit test e
-  il test end-to-end (registrazione → lista → blacklist → confronto → spesa → metriche → offerte
-  notificate senza doppioni → endpoint interni protetti → cancellazione account) passano.
+- Backend: compilato e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e Redis; 28 unit test e
+  il test end-to-end passano. Il percorso: registrazione → lista → blacklist → confronto → spesa →
+  metriche → offerte notificate senza doppioni → endpoint interni protetti → lista condivisa con un
+  secondo utente e aggiornamento via WebSocket → chiusura con lo scontrino → uscita del membro →
+  cancellazione account.
 - Non verificati in questo ambiente: le immagini Docker, il gateway Traefik, i manifest Kubernetes
   (solo sintassi YAML) e la compilazione dell'app Flutter (SDK non scaricabile). La CI li copre al
   primo push: `flutter analyze` potrebbe segnalare piccoli aggiustamenti.
 
-## Prossimi passi (roadmap v1.2)
+## Pubblicazione su GitHub
 
-- Liste condivise in tempo reale (WebSocket) con un secondo utente.
-- Scansione dello scontrino come opzione di chiusura della spesa.
+```bash
+./scripts/publish-github.sh            # crea il repository privato "spesa-smart" e fa il push
+./scripts/publish-github.sh nome --public
+```
+
+## Prossimi passi
+
+- Fonti prezzi reali nell'Ingestion (API e volantini digitali delle insegne della zona).
+- Storico offline dell'app e sincronizzazione completa (drift), se le liste crescono.
+- Inviti tramite link (deep link) oltre al codice.

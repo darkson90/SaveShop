@@ -7,6 +7,7 @@ import '../../../core/widgets/format.dart';
 import '../../offers/offers.dart';
 import '../domain/models.dart';
 import 'list_controller.dart';
+import 'share_screen.dart';
 import 'widgets/quick_add_field.dart';
 
 class ListScreen extends ConsumerWidget {
@@ -17,9 +18,25 @@ class ListScreen extends ConsumerWidget {
     final list = ref.watch(listControllerProvider);
     return Scaffold(
       appBar: AppBar(
-        title: Text(list.valueOrNull?.name ?? 'Lista'),
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(list.valueOrNull?.name ?? 'Lista'),
+          if (list.valueOrNull?.isShared ?? false)
+            Text(
+              'Condivisa con ${list.value!.members.length - 1} ${list.value!.members.length == 2 ? 'persona' : 'persone'}',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+        ]),
         actions: [
           OffersBell(onPressed: () => context.push('/offerte')),
+          PopupMenuButton<String>(
+            tooltip: 'Condivisione',
+            icon: Icon((list.valueOrNull?.isShared ?? false) ? Icons.group : Icons.group_add_outlined),
+            onSelected: (v) => v == 'share' ? context.push('/condividi') : showJoinDialog(context, ref),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'share', child: Text('Condividi questa lista')),
+              PopupMenuItem(value: 'join', child: Text('Entra con un codice')),
+            ],
+          ),
           IconButton(
             tooltip: 'Confronta prezzi',
             icon: const Icon(Icons.compare_arrows),

@@ -19,3 +19,6 @@ final apiClientProvider = Provider<ApiClient>((ref) {
 });
 
 final pushServiceProvider = Provider<PushService>((ref) => PushService(ref.watch(apiClientProvider)));
+
+/// ID dell'utente collegato: serve a riconoscere le proprie modifiche nelle liste condivise.
+final currentUserIdProvider = FutureProvider<String?>((ref) => ref.watch(tokenStorageProvider).userId);

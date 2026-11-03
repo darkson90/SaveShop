@@ -71,24 +71,61 @@ class ListItem {
       );
 }
 
+class Member {
+  const Member({required this.userId, required this.role, required this.label});
+
+  final String userId;
+  final String role;
+  final String label;
+
+  bool get isOwner => role == 'owner';
+
+  factory Member.fromJson(Map<String, dynamic> j) =>
+      Member(userId: j['userId'] as String, role: j['role'] as String, label: j['label'] as String);
+
+  Map<String, dynamic> toJson() => {'userId': userId, 'role': role, 'label': label};
+}
+
 class ShoppingList {
-  const ShoppingList({required this.id, required this.name, required this.items});
+  const ShoppingList({
+    required this.id,
+    required this.name,
+    required this.items,
+    this.role = 'owner',
+    this.members = const [],
+  });
 
   final String id;
   final String name;
   final List<ListItem> items;
 
+  /// 'owner' per chi ha creato la lista, 'editor' per chi vi è entrato con un codice.
+  final String role;
+  final List<Member> members;
+
+  bool get isOwner => role == 'owner';
+  bool get isShared => members.length > 1;
+
   factory ShoppingList.fromJson(Map<String, dynamic> j) => ShoppingList(
         id: j['id'] as String,
         name: j['name'] as String,
+        role: (j['role'] as String?) ?? 'owner',
+        members: ((j['members'] as List?) ?? const []).map((e) => Member.fromJson(e as Map<String, dynamic>)).toList(),
         items: ((j['items'] as List?) ?? const [])
             .map((e) => ListItem.fromJson(e as Map<String, dynamic>))
             .toList(),
       );
 
-  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'items': items.map((i) => i.toJson()).toList()};
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'role': role,
+        'members': members.map((m) => m.toJson()).toList(),
+        'items': items.map((i) => i.toJson()).toList(),
+      };
 
-  ShoppingList copyWith({List<ListItem>? items}) => ShoppingList(id: id, name: name, items: items ?? this.items);
+  ShoppingList copyWith({List<ListItem>? items}) =>
+      ShoppingList(id: id, name: name, role: role, members: members, items: items ?? this.items);
 }
 
 class FrequentProduct {

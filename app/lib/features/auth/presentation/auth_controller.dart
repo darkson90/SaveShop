@@ -49,6 +49,7 @@ class AuthController extends AsyncNotifier<bool> {
     ref.invalidate(listControllerProvider);
     ref.invalidate(profileProvider);
     ref.invalidate(searchContextProvider);
+    ref.invalidate(currentUserIdProvider);
   }
 
   void sessionExpired() => state = const AsyncData(false);

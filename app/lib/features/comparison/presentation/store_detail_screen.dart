@@ -103,13 +103,21 @@ class _StoreDetailScreenState extends ConsumerState<StoreDetailScreen> {
       bottomNavigationBar: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
-          child: FilledButton.icon(
-            onPressed: _saving ? null : _purchase,
-            icon: _saving
-                ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.check),
-            label: const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Text('Ho fatto la spesa qui')),
-          ),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            FilledButton.icon(
+              onPressed: _saving ? null : () => context.push('/scontrino', extra: widget.result),
+              icon: const Icon(Icons.receipt_long),
+              label: const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Text('Ho fatto la spesa qui: scansiona lo scontrino')),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _saving ? null : _purchase,
+              icon: _saving
+                  ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.check),
+              label: const Text('Registra senza scontrino (prezzi di listino)'),
+            ),
+          ]),
         ),
       ),
     );

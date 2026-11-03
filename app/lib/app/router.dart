@@ -10,6 +10,8 @@ import '../features/comparison/presentation/store_detail_screen.dart';
 import '../features/offers/offers.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/shopping_list/presentation/list_screen.dart';
+import '../features/shopping_list/presentation/receipt_screen.dart';
+import '../features/shopping_list/presentation/share_screen.dart';
 import '../features/stores/presentation/excluded_stores_screen.dart';
 import '../features/stores/presentation/settings_screen.dart';
 
@@ -54,6 +56,13 @@ final routerProvider = Provider<GoRouter>((ref) {
         ],
       ),
       GoRoute(path: '/offerte', builder: (_, __) => const OffersScreen()),
+      GoRoute(path: '/condividi', builder: (_, __) => const ShareScreen()),
+      GoRoute(
+        path: '/scontrino',
+        builder: (_, state) => state.extra is StoreResult
+            ? ReceiptScreen(store: state.extra! as StoreResult)
+            : const ComparisonScreen(),
+      ),
       GoRoute(
         path: '/impostazioni',
         builder: (_, __) => const SettingsScreen(),

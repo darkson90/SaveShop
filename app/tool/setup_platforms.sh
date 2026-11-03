@@ -15,7 +15,15 @@ fi
 
 PLIST=ios/Runner/Info.plist
 if ! grep -q NSLocationWhenInUseUsageDescription "$PLIST"; then
-  perl -0pi -e 's#<dict>#<dict>\n\t<key>NSLocationWhenInUseUsageDescription</key>\n\t<string>Usiamo la posizione solo per trovare i negozi vicini e confrontare i prezzi.</string>#' "$PLIST"
+  perl -0pi -e 's#<dict>#<dict>\n\t<key>NSLocationWhenInUseUsageDescription</key>\n\t<string>Usiamo la posizione solo per trovare i negozi vicini e confrontare i prezzi.</string>\n\t<key>NSCameraUsageDescription</key>\n\t<string>La fotocamera serve a leggere lo scontrino; la foto resta sul telefono.</string>\n\t<key>NSPhotoLibraryUsageDescription</key>\n\t<string>Puoi scegliere la foto di uno scontrino dalla galleria.</string>#' "$PLIST"
+fi
+
+# ML Kit (lettura scontrino) richiede iOS 15.5 o successivo.
+PODFILE=ios/Podfile
+if [ -f "$PODFILE" ]; then
+  perl -pi -e "s/^#?\s*platform :ios, .*/platform :ios, '15.5'/" "$PODFILE"
+else
+  echo "Nota: dopo il primo 'flutter build ios' imposta platform :ios, '15.5' in ios/Podfile."
 fi
 
 flutter pub get

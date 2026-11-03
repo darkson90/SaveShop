@@ -8,6 +8,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 class LocalStore {
   static const _listKey = 'cached_list';
   static const _queueKey = 'offline_queue';
+  static const _currentListKey = 'current_list_id';
+
+  /// Lista scelta dall'utente (es. una lista condivisa in cui è entrato con un codice).
+  Future<String?> readCurrentListId() async => (await _prefs).getString(_currentListKey);
+
+  Future<void> writeCurrentListId(String? id) async {
+    final prefs = await _prefs;
+    id == null ? await prefs.remove(_currentListKey) : await prefs.setString(_currentListKey, id);
+  }
 
   Future<SharedPreferences> get _prefs => SharedPreferences.getInstance();
 
@@ -40,6 +49,7 @@ class LocalStore {
     final prefs = await _prefs;
     await prefs.remove(_listKey);
     await prefs.remove(_queueKey);
+    await prefs.remove(_currentListKey);
   }
 }
 

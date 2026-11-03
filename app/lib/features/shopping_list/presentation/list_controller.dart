@@ -1,13 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../app/providers.dart';
 import '../../../core/network/api_client.dart';
+import '../../../core/network/live_updates.dart';
 import '../../../core/storage/local_store.dart';
 import '../data/list_repository.dart';
 import '../domain/models.dart';
 
 final listRepositoryProvider = Provider((ref) => ListRepository(ref.watch(apiClientProvider)));
+final liveUpdatesProvider = Provider((ref) => LiveUpdates(ref.watch(tokenStorageProvider)));
 
 final listControllerProvider = AsyncNotifierProvider<ListController, ShoppingList>(ListController.new);
 
@@ -23,12 +27,20 @@ class ListController extends AsyncNotifier<ShoppingList> {
   ListRepository get _repo => ref.read(listRepositoryProvider);
   LocalStore get _local => ref.read(localStoreProvider);
 
+  StreamSubscription<ListSignal>? _live;
+  Timer? _reloadDebounce;
+
   @override
   Future<ShoppingList> build() async {
+    ref.onDispose(() {
+      _live?.cancel();
+      _reloadDebounce?.cancel();
+    });
     try {
       await _flushQueue();
-      final list = await _repo.currentList();
+      final list = await _repo.currentList(preferredId: await _local.readCurrentListId());
       await _local.writeCachedList(list.toJson());
+      _watch(list.id);
       return list;
     } on ApiException catch (e) {
       if (!e.isNetwork) rethrow;
@@ -91,7 +103,58 @@ class ListController extends AsyncNotifier<ShoppingList> {
   /// Dopo "Ho fatto la spesa qui" il server chiude la lista: ne apriamo una nuova.
   Future<void> startNewList() async {
     final list = await _repo.newList();
+    await _local.writeCurrentListId(list.id);
     _set(list);
+    _watch(list.id);
+  }
+
+  /// Entra in una lista condivisa con il codice ricevuto e la rende la lista corrente.
+  Future<void> join(String code) async {
+    final listId = await _repo.join(code.trim());
+    await _local.writeCurrentListId(listId);
+    final list = await _repo.getList(listId);
+    _set(list);
+    _watch(list.id);
+  }
+
+  /// Esce da una lista condivisa (non propria) e torna alla lista personale più recente.
+  Future<void> leave(String myUserId) async {
+    final list = state.valueOrNull;
+    if (list == null) return;
+    await _repo.removeMember(list.id, myUserId);
+    await _local.writeCurrentListId(null);
+    ref.invalidateSelf();
+  }
+
+  /// Ricarica dal server dopo un segnale in tempo reale, conservando gli articoli ancora in coda offline.
+  Future<void> reload() async {
+    final current = state.valueOrNull;
+    if (current == null) return;
+    try {
+      final fresh = await _repo.getList(current.id);
+      final pending = current.items.where((i) => i.pending);
+      _set(fresh.copyWith(items: [...fresh.items, ...pending]));
+    } on ApiException catch (e) {
+      if (e.status == 404) ref.invalidateSelf(); // rimossi dalla lista o lista eliminata
+    }
+  }
+
+  void _watch(String listId) {
+    _live?.cancel();
+    _live = ref.read(liveUpdatesProvider).watch(listId).listen((signal) async {
+      // Le proprie modifiche sono già applicate in modo ottimistico.
+      final me = await ref.read(currentUserIdProvider.future);
+      if (signal.by != null && signal.by == me && signal.op.startsWith('item.')) return;
+      if (signal.op == 'list.purchased' || signal.op == 'list.deleted' || signal.op == 'members.removed') {
+        // La lista non è più utilizzabile: si passa alla lista aperta più recente.
+        _local.writeCurrentListId(null);
+        ref.invalidateSelf();
+        return;
+      }
+      // Più segnali ravvicinati (es. un membro che aggiunge 5 articoli) = una sola ricarica.
+      _reloadDebounce?.cancel();
+      _reloadDebounce = Timer(const Duration(milliseconds: 300), reload);
+    });
   }
 
   Future<void> _sync(ListItem original, Future<ListItem> Function() call) async {

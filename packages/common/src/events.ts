@@ -21,6 +21,8 @@ export const Events = {
   ItemAdded: 'ItemAdded',
   PurchaseCompleted: 'PurchaseCompleted',
   PricesUpdated: 'PricesUpdated',
+  /** Segnale effimero via broadcast(): una lista condivisa è cambiata. */
+  ListChanged: 'ListChanged',
 } as const;
 
 type Handler = (event: EventEnvelope<any>) => Promise<void>;
@@ -75,6 +77,35 @@ export class EventBus {
         ch.nack(msg, false, !msg.fields.redelivered); // un secondo tentativo, poi scarta
       }
     });
+  }
+
+  /**
+   * Segnale effimero (non persistente, niente outbox): serve a notificare in tempo reale le altre
+   * istanze, ad esempio i client WebSocket collegati a un'altra replica dello stesso servizio.
+   */
+  async broadcast(type: string, payload: unknown): Promise<void> {
+    if (!this.channel) throw new Error('EventBus non connesso');
+    this.channel.publish(EXCHANGE, type, Buffer.from(JSON.stringify({ type, payload, at: new Date().toISOString() })), {
+      persistent: false,
+      contentType: 'application/json',
+      expiration: '10000',
+    });
+  }
+
+  /** Ogni istanza riceve tutti i segnali: coda esclusiva, eliminata quando l'istanza si ferma. */
+  async onBroadcast(types: string[], handler: (msg: { type: string; payload: any }) => void): Promise<void> {
+    if (!this.channel) throw new Error('EventBus non connesso');
+    const ch = this.channel;
+    const { queue } = await ch.assertQueue('', { exclusive: true, autoDelete: true });
+    for (const type of types) await ch.bindQueue(queue, EXCHANGE, type);
+    await ch.consume(queue, (msg) => {
+      if (!msg) return;
+      try {
+        handler(JSON.parse(msg.content.toString()));
+      } catch (err) {
+        console.error('[events] segnale non valido:', err);
+      }
+    }, { noAck: true });
   }
 
   async close(): Promise<void> {

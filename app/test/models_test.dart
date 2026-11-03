@@ -14,6 +14,20 @@ void main() {
     expect(item.label, 'candeline');
   });
 
+  test('ShoppingList: lista condivisa con ruolo e membri', () {
+    final l = ShoppingList.fromJson({
+      'id': 'l1', 'name': 'Spesa di casa', 'role': 'editor',
+      'members': [
+        {'userId': 'u1', 'role': 'owner', 'label': 'stefano'},
+        {'userId': 'u2', 'role': 'editor', 'label': 'giulia'},
+      ],
+      'items': [],
+    });
+    expect(l.isOwner, isFalse);
+    expect(l.isShared, isTrue);
+    expect(ShoppingList.fromJson(l.toJson()).members.last.label, 'giulia');
+  });
+
   test('Comparison: modalità negozio unico', () {
     final c = Comparison.fromJson(CompareMode.singleStore, {
       'storesConsidered': 3,

@@ -3,6 +3,7 @@
 // In locale (scripts/dev-local.sh): npm run e2e
 import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
+import WebSocket from 'ws';
 
 const GATEWAY = process.env.GATEWAY_URL;
 const PORTS = { auth: 3001, user: 3002, store: 3003, catalog: 3004, list: 3005, pricing: 3006, analytics: 3007, notification: 3008 };
@@ -10,10 +11,11 @@ const base = (svc) => GATEWAY ?? `http://localhost:${PORTS[svc]}`;
 const HOME = { lat: 46.419, lng: 12.245 }; // Vodo di Cadore, coerente con i dati seed
 
 let token;
-async function api(svc, path, { method = 'GET', body, headers = {}, expect = [200, 201, 204] } = {}) {
+async function api(svc, path, { method = 'GET', body, headers = {}, expect = [200, 201, 204], as } = {}) {
+  const bearer = as ?? token;
   const res = await fetch(`${base(svc)}/api/v1${path}`, {
     method,
-    headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}), ...headers },
+    headers: { 'content-type': 'application/json', ...(bearer ? { authorization: `Bearer ${bearer}` } : {}), ...headers },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
@@ -158,7 +160,76 @@ const internal = await fetch(`${base('catalog')}/api/v1/internal/products/eans`)
 assert.ok([401, 404].includes(internal.status));
 step('endpoint interni protetti');
 
-// 8. Ripristino negozio e cancellazione account
+// 8. Lista condivisa (v1.2): invito, ingresso di un secondo utente, aggiornamenti in tempo reale
+const shared = await api('list', '/lists', { method: 'POST', body: { name: 'Spesa di casa' } });
+for (const raw of ['2 latte', 'mozzarella', 'spaghetti']) {
+  await api('list', `/lists/${shared.id}/items`, { method: 'POST', body: { raw } });
+}
+const invite = await api('list', `/lists/${shared.id}/invites`, { method: 'POST' });
+assert.match(invite.code, /^[A-Z2-9]{6}$/);
+const emailB = `test-b+${Date.now()}@example.com`;
+const tokenB = (await api('auth', '/auth/register', { method: 'POST', body: { email: emailB, password: 'password-sicura' } })).accessToken;
+await api('list', `/lists/${shared.id}`, { as: tokenB, expect: [404] }); // non ancora membro
+const joined = await api('list', '/lists/join', { method: 'POST', body: { code: invite.code.toLowerCase() }, as: tokenB });
+assert.equal(joined.listId, shared.id);
+const listsB = await api('list', '/lists', { as: tokenB });
+assert.equal(listsB.items.find((l) => l.id === shared.id)?.role, 'editor');
+await api('list', `/lists/${shared.id}`, { method: 'DELETE', as: tokenB, expect: [403] });
+await api('list', `/lists/${shared.id}/invites`, { method: 'POST', as: tokenB, expect: [403] });
+step(`lista condivisa: codice ${invite.code}, secondo utente entrato come editor, permessi del proprietario rispettati`);
+
+const liveUrl = `${base('list').replace(/^http/, 'ws')}/api/v1/lists/${shared.id}/live`;
+const unauthorized = await new Promise((resolve) => {
+  const ws = new WebSocket(liveUrl);
+  ws.on('unexpected-response', (_req, res) => resolve(res.statusCode));
+  ws.on('error', () => resolve('error'));
+});
+assert.equal(unauthorized, 401);
+const ws = new WebSocket(liveUrl, { headers: { authorization: `Bearer ${token}` } });
+const received = [];
+ws.on('message', (m) => received.push(JSON.parse(m.toString())));
+await new Promise((resolve, reject) => { ws.once('open', resolve); ws.once('error', reject); });
+await eventually(() => assert.ok(received.some((m) => m.op === 'hello')));
+const pane = await api('list', `/lists/${shared.id}/items`, { method: 'POST', body: { raw: 'pane' }, as: tokenB });
+const signal = await eventually(() => {
+  const m = received.find((x) => x.op === 'item.added' && x.itemId === pane.id);
+  assert.ok(m, 'segnale item.added ricevuto');
+  return m;
+});
+const detail = await api('list', `/lists/${shared.id}`);
+assert.equal(detail.members.length, 2);
+assert.equal(detail.items.find((i) => i.id === pane.id).addedBy, signal.by);
+step('aggiornamento in tempo reale via WebSocket: il proprietario vede subito l\'articolo aggiunto dall\'altro membro');
+
+// 9. Chiusura spesa con lo scontrino (v1.2): righe lette, abbinate e prezzi pagati effettivi
+const receiptText = [
+  'SUPERRISPARMIO PIEVE', 'DOCUMENTO COMMERCIALE',
+  'LATTE PS 1L          2,38', '  2 x 1,19',
+  'MOZZARELLA 125G      0,89',
+  'SPAGHETTI 500G       0,95',
+  'PANE CASSETTA        1,59',
+  'TOTALE COMPLESSIVO   5,81', 'PAGAMENTO ELETTRONICO 5,81',
+].join('\n');
+const read = await api('list', `/lists/${shared.id}/receipt`, { method: 'POST', body: { text: receiptText } });
+assert.equal(read.lines.length, 4);
+assert.equal(read.totalMismatch, 0);
+assert.ok(read.lines.every((l) => l.match), 'tutte le righe abbinate');
+assert.equal(read.unmatchedItems.length, 0);
+const target = (await api('pricing', '/comparisons', { method: 'POST', body: { listId: shared.id, mode: 'single_store', ...geo } })).results[0];
+const paidPrices = read.lines.map((l) => ({ itemId: l.match.itemId, unitPaid: l.unitPrice }));
+const closed = await api('list', `/lists/${shared.id}/purchase`, { method: 'POST', body: { storeId: target.storeId, ...geo, paidPrices }, as: tokenB });
+assert.equal(closed.pricesFromReceipt, 4);
+assert.equal(closed.totalPaid, 5.81);
+await eventually(() => assert.ok(received.some((m) => m.op === 'list.purchased')));
+ws.close();
+step(`scontrino: 4 righe abbinate, pagati ${closed.totalPaid} € (prezzi reali), risparmio ${closed.savedEur} €`);
+
+await api('list', `/lists/${shared.id}/members/${detail.members.find((m) => m.role === 'editor').userId}`, { method: 'DELETE', as: tokenB });
+await api('list', `/lists/${shared.id}`, { as: tokenB, expect: [404] });
+await api('user', '/users/me', { method: 'DELETE', as: tokenB });
+step('il secondo membro esce dalla lista');
+
+// 10. Ripristino negozio e cancellazione account
 await api('store', `/users/me/excluded-stores/${excl.id}`, { method: 'DELETE' });
 await api('user', '/users/me', { method: 'DELETE' });
 await eventually(() => api('auth', '/auth/login', { method: 'POST', body: { email, password: 'password-sicura' }, expect: [401] }));

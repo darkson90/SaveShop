@@ -35,6 +35,8 @@ class AuthRepository {
     await _tokens.clear();
   }
 
-  Future<void> _store(Map<String, dynamic> res) =>
-      _tokens.save(accessToken: res['accessToken'] as String, refreshToken: res['refreshToken'] as String);
+  Future<void> _store(Map<String, dynamic> res) async {
+    await _tokens.save(accessToken: res['accessToken'] as String, refreshToken: res['refreshToken'] as String);
+    await _tokens.saveUserId(res['userId'] as String);
+  }
 }

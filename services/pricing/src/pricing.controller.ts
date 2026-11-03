@@ -98,7 +98,11 @@ export class PricingController {
     }));
     const { stores, matrix } = await this.loadMatrix(token, this.geo(body), items.map((i) => i.productId));
     if (!matrix.has(storeId)) throw new BadRequestException('Il negozio indicato non è nel raggio o è escluso');
-    return purchaseQuote(items, stores, matrix, storeId);
+    const overrides: Record<string, number> = {};
+    for (const [productId, unitPaid] of Object.entries(body.overrides ?? {})) {
+      overrides[reqUuid(productId, 'overrides')] = reqNumber(unitPaid, 'overrides.unitPaid', 0.01, 999);
+    }
+    return purchaseQuote(items, stores, matrix, storeId, overrides);
   }
 
   private geo(body: any) {

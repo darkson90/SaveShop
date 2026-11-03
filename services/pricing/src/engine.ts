@@ -171,10 +171,18 @@ export function perItem(items: Item[], stores: StoreInfo[], matrix: Matrix) {
  * (blacklist esclusa) calcolato sugli articoli disponibili in entrambi i negozi: gli articoli che
  * mancano nel riferimento restano nelle righe (per categorie e top prodotti) ma fuori dal risparmio.
  */
-export function purchaseQuote(items: Item[], stores: StoreInfo[], matrix: Matrix, storeId: string) {
-  const paidPrices = matrix.get(storeId);
-  if (!paidPrices) throw new Error('Negozio non ammesso nel raggio');
-  const available = items.filter((i) => paidPrices.has(i.productId));
+export function purchaseQuote(
+  items: Item[],
+  stores: StoreInfo[],
+  matrix: Matrix,
+  storeId: string,
+  /** Prezzi realmente pagati letti dallo scontrino, per prodotto: prevalgono sul listino. */
+  overrides: Record<string, number> = {},
+) {
+  const listPrices = matrix.get(storeId);
+  if (!listPrices) throw new Error('Negozio non ammesso nel raggio');
+  const paidOf = (productId: string) => overrides[productId] ?? listPrices.get(productId)?.unitPrice;
+  const available = items.filter((i) => paidOf(i.productId) !== undefined);
 
   let reference: { storeId: string; covered: number; total: number } | undefined;
   for (const store of stores) {
@@ -193,7 +201,7 @@ export function purchaseQuote(items: Item[], stores: StoreInfo[], matrix: Matrix
   let comparablePaid = 0;
   let totalReference = 0;
   const lines = available.map((i) => {
-    const unitPaid = paidPrices.get(i.productId)!.unitPrice;
+    const unitPaid = paidOf(i.productId)!;
     const ref = refPrices?.get(i.productId);
     const unitReference = ref ? ref.unitPrice : null;
     totalPaid += unitPaid * i.quantity;
@@ -201,7 +209,7 @@ export function purchaseQuote(items: Item[], stores: StoreInfo[], matrix: Matrix
       comparablePaid += unitPaid * i.quantity;
       totalReference += unitReference * i.quantity;
     }
-    return { productId: i.productId, quantity: i.quantity, unitPaid, unitReference };
+    return { productId: i.productId, quantity: i.quantity, unitPaid, unitReference, fromReceipt: i.productId in overrides };
   });
   const saved = totalReference - comparablePaid;
   return {
