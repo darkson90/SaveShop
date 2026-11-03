@@ -198,7 +198,7 @@ class _AddCardDialogState extends State<_AddCardDialog> {
       title: const Text('Nuova fidelity card'),
       content: Column(mainAxisSize: MainAxisSize.min, children: [
         DropdownButtonFormField<Chain>(
-          value: _chain,
+          initialValue: _chain,
           decoration: const InputDecoration(labelText: 'Insegna'),
           items: [for (final c in widget.chains) DropdownMenuItem(value: c, child: Text(c.name))],
           onChanged: (c) => setState(() => _chain = c),

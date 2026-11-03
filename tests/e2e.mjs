@@ -2,7 +2,9 @@
 // Con Docker: GATEWAY_URL=http://localhost:8080 npm run e2e
 // In locale (scripts/dev-local.sh): npm run e2e
 import assert from 'node:assert/strict';
-import { execSync } from 'node:child_process';
+import { exec, execSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import { createServer } from 'node:http';
 import WebSocket from 'ws';
 
 const GATEWAY = process.env.GATEWAY_URL;
@@ -229,7 +231,56 @@ await api('list', `/lists/${shared.id}`, { as: tokenB, expect: [404] });
 await api('user', '/users/me', { method: 'DELETE', as: tokenB });
 step('il secondo membro esce dalla lista');
 
-// 10. Ripristino negozio e cancellazione account
+// 10. Fonte reale Open Prices, con un server locale che risponde come l'API pubblica
+if (process.env.INGESTION_CMD) {
+  const fixture = {
+    page: 1, pages: 1, size: 100, total: 2,
+    items: [
+      { product_code: '8000000000101', price: 0.89, price_is_discounted: true, price_without_discount: 1.29, discount_type: 'SALE',
+        type: 'PRODUCT', currency: 'EUR', date: new Date().toISOString().slice(0, 10), duplicate_of: null,
+        location: { type: 'OSM', osm_id: 999000111, osm_type: 'NODE', osm_name: 'Market Test Vodo', osm_brand: 'Kanguro',
+          osm_address_city: 'Vodo di Cadore', osm_lat: 46.4195, osm_lon: 12.2465 },
+        product: { product_name: 'Latte parzialmente scremato', categories_tags: ['en:dairies', 'en:milks'], source: 'off' } },
+      { product_code: '8099999000017', price: 1.79, price_is_discounted: false, type: 'PRODUCT', currency: 'EUR',
+        date: new Date().toISOString().slice(0, 10), duplicate_of: null,
+        location: { type: 'OSM', osm_id: 999000111, osm_type: 'NODE', osm_name: 'Market Test Vodo', osm_brand: 'Kanguro',
+          osm_address_city: 'Vodo di Cadore', osm_lat: 46.4195, osm_lon: 12.2465 },
+        product: { product_name: 'Gnocchi di patate 500 g', brands: 'Esempio', categories_tags: ['en:cereals-and-potatoes', 'en:pastas'],
+          product_quantity: 500, product_quantity_unit: 'g', source: 'off' } },
+    ],
+  };
+  const server = createServer((req, res) => {
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify(fixture));
+  });
+  await new Promise((r) => server.listen(3999, r));
+  // Esecuzione asincrona: il server locale qui sopra deve poter rispondere mentre l'ingestion gira.
+  const run = await promisify(exec)(process.env.INGESTION_CMD, {
+    env: { ...process.env, INGESTION_SOURCES: 'open_prices', OPEN_PRICES_URL: 'http://localhost:3999/prices', OPEN_PRICES_LAT: '46.42', OPEN_PRICES_LON: '12.25' },
+  });
+  process.stdout.write(run.stdout);
+  server.close();
+  const near = await api('store', `/stores?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=5`);
+  const market = near.items.find((s) => s.name === 'Market Test Vodo');
+  assert.ok(market, 'negozio OpenStreetMap creato');
+  assert.equal(market.chainName, 'Kanguro');
+  const gnocchi = await eventually(async () => {
+    const r = await api('catalog', '/products/suggest?q=gnocchi');
+    assert.ok(r.items[0]?.name.startsWith('Gnocchi'));
+    return r.items[0];
+  });
+  assert.equal(gnocchi.category, 'Dispensa');
+  const lattePrices = await eventually(async () => {
+    const r = await api('pricing', `/products/0190b000-0000-7000-8000-000000000101/prices?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=5`);
+    const m = r.items.find((x) => x.storeId === market.id);
+    assert.ok(m, 'prezzo Open Prices disponibile');
+    return m;
+  });
+  assert.deepEqual([lattePrices.unitPrice, lattePrices.promo], [0.89, true]);
+  step(`Open Prices: creati "${market.name}" e "${gnocchi.name}", latte in offerta a ${lattePrices.unitPrice} €`);
+}
+
+// 11. Ripristino negozio e cancellazione account
 await api('store', `/users/me/excluded-stores/${excl.id}`, { method: 'DELETE' });
 await api('user', '/users/me', { method: 'DELETE' });
 await eventually(() => api('auth', '/auth/login', { method: 'POST', body: { email, password: 'password-sicura' }, expect: [401] }));

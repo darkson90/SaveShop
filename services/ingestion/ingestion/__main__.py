@@ -9,8 +9,9 @@ import uuid
 
 import pika
 
-from .sources import RawPrice
+from .sources import RawPrice, Source
 from .sources.demo import DemoSource
+from .sources.open_prices import OpenPricesSource
 
 AMQP_URL = os.environ.get("AMQP_URL", "amqp://guest:guest@rabbitmq:5672")
 CATALOG_URL = os.environ.get("CATALOG_URL", "http://catalog:3000")
@@ -18,6 +19,25 @@ STORE_URL = os.environ.get("STORE_URL", "http://store:3000")
 SERVICE_TOKEN = os.environ.get("SERVICE_TOKEN", "")
 EXCHANGE = "spesa.events"
 BATCH_SIZE = 500
+# Fonti attive, separate da virgola: "demo" (listini dimostrativi), "open_prices" (prezzi reali).
+SOURCES = os.environ.get("INGESTION_SOURCES", "demo")
+
+
+def build_sources() -> list[Source]:
+    sources: list[Source] = []
+    for name in (s.strip() for s in SOURCES.split(",")):
+        if name == "demo":
+            sources.append(DemoSource())
+        elif name == "open_prices":
+            sources.append(OpenPricesSource(
+                lat=float(os.environ.get("OPEN_PRICES_LAT", "46.14")),    # Belluno e dintorni
+                lon=float(os.environ.get("OPEN_PRICES_LON", "12.22")),
+                radius_km=float(os.environ.get("OPEN_PRICES_RADIUS_KM", "40")),
+                days=int(os.environ.get("OPEN_PRICES_DAYS", "90")),
+            ))
+        elif name:
+            print(f"[ingestion] fonte sconosciuta ignorata: {name}", flush=True)
+    return sources
 
 
 def get_json(url: str, retries: int = 30) -> dict:
@@ -33,6 +53,39 @@ def get_json(url: str, retries: int = 30) -> dict:
                 raise
             time.sleep(min(attempt, 5))
     raise RuntimeError("irraggiungibile")
+
+
+def post_json(url: str, body: dict) -> dict:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(body).encode(),
+        method="POST",
+        headers={"X-Service-Token": SERVICE_TOKEN, "Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=30) as res:
+        return json.loads(res.read())
+
+
+def create_missing(raw: list[RawPrice], products: dict[str, str], stores: dict[str, str]) -> tuple[int, int]:
+    """Crea nel catalogo e nello Store Service i prodotti e i negozi nuovi portati da una fonte."""
+    new_products = {r.ean: r.product for r in raw if r.ean not in products and r.product and r.product.name}
+    new_stores = {r.store_ref: r.store for r in raw if r.store_ref not in stores and r.store}
+    for i in range(0, len(new_products), BATCH_SIZE):
+        chunk = list(new_products.items())[i:i + BATCH_SIZE]
+        res = post_json(f"{CATALOG_URL}/api/v1/internal/products/upsert", {"items": [
+            {"ean": ean, "name": p.name, "brand": p.brand, "categories": list(p.categories),
+             "quantity": p.quantity, "quantityUnit": p.quantity_unit, "source": p.source}
+            for ean, p in chunk
+        ]})
+        products.update({x["ean"]: x["id"] for x in res["items"]})
+    for i in range(0, len(new_stores), BATCH_SIZE):
+        chunk = list(new_stores.items())[i:i + BATCH_SIZE]
+        res = post_json(f"{STORE_URL}/api/v1/internal/stores/upsert", {"items": [
+            {"externalRef": ref, "name": st.name, "chain": st.chain, "address": st.address, "lat": st.lat, "lng": st.lng}
+            for ref, st in chunk
+        ]})
+        stores.update({x["externalRef"]: x["id"] for x in res["items"]})
+    return len(new_products), len(new_stores)
 
 
 def resolve_maps() -> tuple[dict[str, str], dict[str, str]]:
@@ -105,11 +158,18 @@ def run_once() -> None:
         channel = connection.channel()
         channel.exchange_declare(exchange=EXCHANGE, exchange_type="topic", durable=True)
         channel.confirm_delivery()
-        for source in [DemoSource()]:
+        for source in build_sources():
             started_at = dt.datetime.now(dt.timezone.utc).isoformat()
-            rows, skipped = normalize(list(source.fetch()), products, stores)
+            try:
+                raw = list(source.fetch())
+                created_products, created_stores = create_missing(raw, products, stores)
+            except Exception as exc:  # una fonte esterna irraggiungibile non blocca le altre
+                print(f"[ingestion] {source.name}: fonte non disponibile ({exc})", flush=True)
+                continue
+            rows, skipped = normalize(raw, products, stores)
             publish(channel, source.name, rows, started_at)
-            print(f"[ingestion] {source.name}: {len(rows)} prezzi pubblicati, {skipped} scartati", flush=True)
+            extra = f", nuovi: {created_products} prodotti, {created_stores} negozi" if created_products or created_stores else ""
+            print(f"[ingestion] {source.name}: {len(rows)} prezzi pubblicati, {skipped} scartati{extra}", flush=True)
     finally:
         connection.close()
 

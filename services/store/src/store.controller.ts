@@ -137,6 +137,42 @@ export class StoreController {
     return { items: await this.findAllowed(user.userId, q) };
   }
 
+  /**
+   * Interno (Ingestion): crea o aggiorna i punti vendita arrivati da una fonte esterna
+   * (es. "osm:node:2620770361" da Open Prices). L'insegna si crea al primo uso.
+   */
+  @ServiceOnly()
+  @Post('internal/stores/upsert')
+  async upsert(@Body() body: any) {
+    const items: any[] = Array.isArray(body?.items) ? body.items.slice(0, 500) : [];
+    return withTx(this.pool, async (client) => {
+      const result: Array<{ externalRef: string; id: string }> = [];
+      for (const raw of items) {
+        const externalRef = typeof raw?.externalRef === 'string' ? raw.externalRef.slice(0, 100) : '';
+        const name = typeof raw?.name === 'string' ? raw.name.trim().slice(0, 120) : '';
+        const lat = Number(raw?.lat);
+        const lng = Number(raw?.lng);
+        if (!externalRef || !name || !Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) continue;
+        const chainName = (typeof raw.chain === 'string' && raw.chain.trim() ? raw.chain : name).trim().slice(0, 80);
+        const chain = await client.query(
+          `INSERT INTO chains (id, name) VALUES ($1, $2)
+           ON CONFLICT (name) DO UPDATE SET name = EXCLUDED.name RETURNING id`,
+          [uuidv7(), chainName],
+        );
+        const store = await client.query(
+          `INSERT INTO stores (id, chain_id, name, address, location, external_ref)
+           VALUES ($1, $2, $3, $4, ST_SetSRID(ST_MakePoint($6, $5), 4326)::geography, $7)
+           ON CONFLICT (external_ref) DO UPDATE
+             SET name = EXCLUDED.name, address = EXCLUDED.address, location = EXCLUDED.location, active = true
+           RETURNING id`,
+          [uuidv7(), chain.rows[0].id, name, typeof raw.address === 'string' ? raw.address.slice(0, 200) : '', lat, lng, externalRef],
+        );
+        result.push({ externalRef, id: store.rows[0].id });
+      }
+      return { items: result };
+    });
+  }
+
   /** Interno (Ingestion): risolve il codice del punto vendita della fonte esterna. */
   @ServiceOnly()
   @Get('internal/stores/by-ref')

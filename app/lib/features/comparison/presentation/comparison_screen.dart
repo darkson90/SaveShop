@@ -86,6 +86,9 @@ class _Header extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(parts.join(' · '), style: Theme.of(context).textTheme.bodySmall),
+        // Licenza ODbL: i dati di Open Prices vanno citati dove vengono mostrati.
+        Text('Prezzi reali in parte da Open Prices · Open Food Facts (ODbL)',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(color: Theme.of(context).colorScheme.outline)),
         if (c.unmatchedItems > 0)
           Padding(
             padding: const EdgeInsets.only(top: 4),

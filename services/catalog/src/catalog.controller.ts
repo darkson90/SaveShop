@@ -1,5 +1,6 @@
 import { BadRequestException, Body, Controller, Get, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
-import { optNumber, PG_POOL, reqString, reqUuid, ServiceOnly } from '@spesa/common';
+import { addToOutbox, Events, optNumber, PG_POOL, reqString, reqUuid, ServiceOnly, uuidv7, withTx } from '@spesa/common';
+import { mapCategory, packageSize } from './categories';
 import { Pool } from 'pg';
 
 /**
@@ -97,6 +98,45 @@ export class CatalogController {
     if (!ids.length) return { items: [] };
     const { rows } = await this.pool.query(`${DETAIL_SQL} WHERE p.id = ANY($1)`, [ids]);
     return { items: rows.map(toProduct) };
+  }
+
+  /**
+   * Interno (Ingestion): crea i prodotti nuovi arrivati da una fonte esterna, per EAN.
+   * Quelli già presenti non cambiano. Ogni prodotto nuovo viene annunciato con ProductCreated.
+   */
+  @ServiceOnly()
+  @Post('internal/products/upsert')
+  async upsert(@Body() body: any) {
+    const items: any[] = Array.isArray(body?.items) ? body.items.slice(0, 500) : [];
+    return withTx(this.pool, async (client) => {
+      const { rows: cats } = await client.query('SELECT id, name FROM categories WHERE parent_id IS NULL');
+      const categoryId = new Map(cats.map((c) => [c.name, c.id]));
+      const result: Array<{ ean: string; id: string; created: boolean }> = [];
+      for (const raw of items) {
+        const ean = String(raw?.ean ?? '').replace(/\D/g, '');
+        const name = typeof raw?.name === 'string' ? raw.name.trim().slice(0, 120) : '';
+        if (ean.length < 8 || ean.length > 14 || !name) continue;
+        const category = mapCategory(raw.categories, raw.source);
+        const inserted = await client.query(
+          `INSERT INTO products (id, name, brand, ean, category_id, unit, size)
+           VALUES ($1, $2, $3, $4, $5, 'pz', $6)
+           ON CONFLICT (ean) DO NOTHING RETURNING id`,
+          [uuidv7(), name, typeof raw.brand === 'string' ? raw.brand.slice(0, 80) : null, ean,
+            categoryId.get(category) ?? categoryId.get('Dispensa'), packageSize(raw.quantity, raw.quantityUnit)],
+        );
+        if (inserted.rows[0]) {
+          const id = inserted.rows[0].id;
+          await addToOutbox(client, Events.ProductCreated, {
+            productId: id, name, unit: 'pz', categoryId: categoryId.get(category), categoryName: category,
+          });
+          result.push({ ean, id, created: true });
+        } else {
+          const existing = await client.query('SELECT id FROM products WHERE ean = $1', [ean]);
+          result.push({ ean, id: existing.rows[0].id, created: false });
+        }
+      }
+      return { items: result };
+    });
   }
 
   /** Interno (Ingestion): mappa EAN -> prodotto. */

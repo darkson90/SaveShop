@@ -130,6 +130,24 @@ categoria, filtro periodo), Impostazioni (raggio, fidelity card, logout, elimina
   somiglianza del testo). L'utente corregge gli abbinamenti e chiude la spesa con `paidPrices`: il
   risparmio si calcola sui prezzi pagati davvero invece che sui listini.
 
+## Prezzi reali: Open Prices
+
+L'Ingestion legge anche [Open Prices](https://prices.openfoodfacts.org) di Open Food Facts: prezzi
+segnalati dalla comunità con scontrino o foto del cartellino, tramite un'API pubblica e gratuita.
+
+- Fonti attive con `INGESTION_SOURCES` (`demo`, `open_prices`, anche entrambe). In produzione il
+  CronJob usa solo `open_prices`; l'area si imposta con `OPEN_PRICES_LAT`, `OPEN_PRICES_LON`,
+  `OPEN_PRICES_RADIUS_KM` (default: Belluno, 40 km) e `OPEN_PRICES_DAYS` (default 90).
+- Per ogni coppia negozio–prodotto vale l'osservazione più recente; gli sconti senza prezzo pieno sono
+  scartati, quelli "LOYALTY_PROGRAM" diventano promo riservate ai titolari di carta.
+- I negozi sono luoghi OpenStreetMap (`osm:node:…`) e vengono creati nello Store Service al primo prezzo;
+  i prodotti nuovi entrano nel catalogo per codice a barre, con la categoria dedotta da quelle di
+  Open Food Facts (`services/catalog/src/categories.ts`).
+- **Licenza ODbL**: l'app cita la fonte nella schermata di confronto; se la base dati derivata viene resa
+  pubblica, va condivisa alle stesse condizioni.
+- Copertura: i dati dipendono dalle segnalazioni. Nel bellunese oggi sono pochi; chiunque può
+  contribuire con l'app Open Prices, e i prezzi entrano qui al giro notturno successivo.
+
 ## Endpoint aggiuntivi rispetto alle specifiche
 
 - `GET /lists/frequent-products`: alimenta i chip "Compri spesso".
@@ -161,14 +179,16 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
 
 ## Stato della verifica
 
-- Backend: compilato e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e Redis; 28 unit test e
+- Backend: compilato e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e Redis; 31 unit test
+  Node, 5 test Python dell'Ingestion e
   il test end-to-end passano. Il percorso: registrazione → lista → blacklist → confronto → spesa →
   metriche → offerte notificate senza doppioni → endpoint interni protetti → lista condivisa con un
   secondo utente e aggiornamento via WebSocket → chiusura con lo scontrino → uscita del membro →
-  cancellazione account.
-- Non verificati in questo ambiente: le immagini Docker, il gateway Traefik, i manifest Kubernetes
-  (solo sintassi YAML) e la compilazione dell'app Flutter (SDK non scaricabile). La CI li copre al
-  primo push: `flutter analyze` potrebbe segnalare piccoli aggiustamenti.
+  prezzi Open Prices (con un server che simula l'API) → cancellazione account.
+- La CI su GitHub esegue tutto questo a ogni push, più analisi e test dell'app Flutter e la build
+  delle immagini Docker.
+- Ancora da provare su un ambiente reale: il gateway Traefik con Docker Compose, i manifest Kubernetes
+  (solo sintassi YAML) e l'app su un telefono o emulatore.
 
 ## Pubblicazione su GitHub
 
@@ -179,6 +199,6 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
 
 ## Prossimi passi
 
-- Fonti prezzi reali nell'Ingestion (API e volantini digitali delle insegne della zona).
+- Altre fonti reali (API o volantini digitali delle insegne) accanto a Open Prices.
 - Storico offline dell'app e sincronizzazione completa (drift), se le liste crescono.
 - Inviti tramite link (deep link) oltre al codice.
