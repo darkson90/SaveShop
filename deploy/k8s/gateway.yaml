@@ -60,3 +60,11 @@ spec:
             pathType: Prefix
             backend:
               service: { name: gateway, port: { name: http } }
+          - path: /i
+            pathType: Prefix
+            backend:
+              service: { name: gateway, port: { name: http } }
+          - path: /.well-known
+            pathType: Prefix
+            backend:
+              service: { name: gateway, port: { name: http } }

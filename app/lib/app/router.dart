@@ -9,6 +9,7 @@ import '../features/comparison/presentation/comparison_screen.dart';
 import '../features/comparison/presentation/store_detail_screen.dart';
 import '../features/offers/offers.dart';
 import '../features/profile/presentation/profile_screen.dart';
+import '../features/shopping_list/presentation/join_invite_screen.dart';
 import '../features/shopping_list/presentation/list_screen.dart';
 import '../features/shopping_list/presentation/receipt_screen.dart';
 import '../features/shopping_list/presentation/share_screen.dart';
@@ -21,6 +22,9 @@ final routerProvider = Provider<GoRouter>((ref) {
   ref.listen(authControllerProvider, (_, next) => auth.value = next, fireImmediately: true);
   ref.onDispose(auth.dispose);
 
+  // Link d'invito aperto prima dell'accesso: lo riprendiamo subito dopo il login.
+  String? pendingInvite;
+
   return GoRouter(
     initialLocation: '/lista',
     refreshListenable: auth,
@@ -28,11 +32,21 @@ final routerProvider = Provider<GoRouter>((ref) {
       if (auth.value.isLoading && !auth.value.hasValue) return null;
       final loggedIn = auth.value.valueOrNull ?? false;
       final atLogin = state.matchedLocation == '/login';
-      if (!loggedIn) return atLogin ? null : '/login';
-      return atLogin ? '/lista' : null;
+      if (!loggedIn) {
+        if (state.matchedLocation.startsWith('/i/')) pendingInvite = state.matchedLocation;
+        return atLogin ? null : '/login';
+      }
+      if (atLogin) {
+        final next = pendingInvite ?? '/lista';
+        pendingInvite = null;
+        return next;
+      }
+      return null;
     },
     routes: [
       GoRoute(path: '/login', builder: (_, __) => const LoginScreen()),
+      // https://<dominio>/i/CODICE (App Links / Universal Links) e saveshop:///i/CODICE
+      GoRoute(path: '/i/:code', builder: (_, state) => JoinInviteScreen(code: state.pathParameters['code']!.toUpperCase())),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => _HomeShell(shell: shell),
         branches: [

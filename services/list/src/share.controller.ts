@@ -17,6 +17,7 @@ import {
 import { AuthUser, CurrentUser, EVENT_BUS, EventBus, PG_POOL, reqString, reqUuid, withTx } from '@spesa/common';
 import { Pool } from 'pg';
 import { listAccess, memberLabel, notifyChange, requireOwner } from './access';
+import { inviteUrl } from './invite-page';
 
 export const MAX_MEMBERS = 5;
 const INVITE_TTL_HOURS = 48;
@@ -49,7 +50,7 @@ export class ShareController {
            ON CONFLICT (code) DO NOTHING RETURNING expires_at`,
           [code, id, user.userId, INVITE_TTL_HOURS],
         );
-        if (res.rowCount) return { code, expiresAt: res.rows[0].expires_at, maxMembers: MAX_MEMBERS };
+        if (res.rowCount) return { code, url: inviteUrl(code), expiresAt: res.rows[0].expires_at, maxMembers: MAX_MEMBERS };
       }
       throw new ConflictException('Riprova a generare il codice');
     });

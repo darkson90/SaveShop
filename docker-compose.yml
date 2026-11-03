@@ -65,6 +65,7 @@ services:
     environment:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/list_db
       SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}   # dominio dei link d'invito
 
   pricing:
     <<: *node-service

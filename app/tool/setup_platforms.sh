@@ -26,6 +26,16 @@ else
   echo "Nota: dopo il primo 'flutter build ios' imposta platform :ios, '15.5' in ios/Podfile."
 fi
 
+# Link d'invito: https://$APP_LINK_HOST/i/CODICE (App Links) e lo schema saveshop:///i/CODICE.
+APP_LINK_HOST=${APP_LINK_HOST:-api.example.com}
+if ! grep -q 'android:scheme="saveshop"' "$MANIFEST"; then
+  HOST="$APP_LINK_HOST" perl -0pi -e 's#(<intent-filter>\s*<action android:name="android.intent.action.MAIN"\s*/>)#<intent-filter android:autoVerify="true">\n                <action android:name="android.intent.action.VIEW"/>\n                <category android:name="android.intent.category.DEFAULT"/>\n                <category android:name="android.intent.category.BROWSABLE"/>\n                <data android:scheme="https" android:host="$ENV{HOST}" android:pathPrefix="/i/"/>\n            </intent-filter>\n            <intent-filter>\n                <action android:name="android.intent.action.VIEW"/>\n                <category android:name="android.intent.category.DEFAULT"/>\n                <category android:name="android.intent.category.BROWSABLE"/>\n                <data android:scheme="saveshop"/>\n            </intent-filter>\n            $1#' "$MANIFEST"
+fi
+if ! grep -q CFBundleURLSchemes "$PLIST"; then
+  perl -0pi -e 's#<dict>#<dict>\n\t<key>CFBundleURLTypes</key>\n\t<array><dict><key>CFBundleURLSchemes</key><array><string>saveshop</string></array></dict></array>#' "$PLIST"
+fi
+echo "Universal Links iOS: in Xcode aggiungi la capability Associated Domains con applinks:$APP_LINK_HOST"
+
 flutter pub get
 echo "Per le notifiche push: flutterfire configure (vedi README)"
 echo "Piattaforme pronte. Avvio: flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080/api/v1"

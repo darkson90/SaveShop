@@ -14,3 +14,8 @@ data:
   PRICING_URL: http://pricing:3000
   ANALYTICS_URL: http://analytics:3000
   NOTIFICATION_URL: http://notification:3000
+  # Link d'invito e verifica App Links / Universal Links (sostituire con i valori reali).
+  PUBLIC_BASE_URL: https://api.example.com
+  ANDROID_PACKAGE: it.spesasmart.spesa_smart
+  ANDROID_CERT_SHA256: ""
+  IOS_APP_ID: TEAMID.it.spesasmart.spesaSmart

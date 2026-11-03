@@ -11,6 +11,7 @@ import pika
 
 from .sources import RawPrice, Source
 from .sources.demo import DemoSource
+from .sources.feeds import FeedSource
 from .sources.open_prices import OpenPricesSource
 
 AMQP_URL = os.environ.get("AMQP_URL", "amqp://guest:guest@rabbitmq:5672")
@@ -19,7 +20,8 @@ STORE_URL = os.environ.get("STORE_URL", "http://store:3000")
 SERVICE_TOKEN = os.environ.get("SERVICE_TOKEN", "")
 EXCHANGE = "spesa.events"
 BATCH_SIZE = 500
-# Fonti attive, separate da virgola: "demo" (listini dimostrativi), "open_prices" (prezzi reali).
+# Fonti attive, separate da virgola: "demo" (listini dimostrativi), "open_prices" (prezzi reali),
+# "feeds" (listini dei negozi partner, vedi INGESTION_FEEDS).
 SOURCES = os.environ.get("INGESTION_SOURCES", "demo")
 
 
@@ -35,6 +37,9 @@ def build_sources() -> list[Source]:
                 radius_km=float(os.environ.get("OPEN_PRICES_RADIUS_KM", "40")),
                 days=int(os.environ.get("OPEN_PRICES_DAYS", "90")),
             ))
+        elif name == "feeds":
+            # URL o percorsi dei feed dei negozi partner, separati da virgola (docs/feed-format.md).
+            sources.append(FeedSource([x.strip() for x in os.environ.get("INGESTION_FEEDS", "").split(",")]))
         elif name:
             print(f"[ingestion] fonte sconosciuta ignorata: {name}", flush=True)
     return sources

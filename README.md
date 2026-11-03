@@ -148,6 +148,25 @@ segnalati dalla comunità con scontrino o foto del cartellino, tramite un'API pu
 - Copertura: i dati dipendono dalle segnalazioni. Nel bellunese oggi sono pochi; chiunque può
   contribuire con l'app Open Prices, e i prezzi entrano qui al giro notturno successivo.
 
+## Listini dei negozi partner
+
+Un negozio può pubblicare il proprio listino come file JSON (formato in
+[docs/feed-format.md](docs/feed-format.md)): `INGESTION_SOURCES=open_prices,feeds` e
+`INGESTION_FEEDS=<url o file>`. Righe non valide vengono scartate e segnalate nel log; negozi e
+prodotti nuovi vengono creati automaticamente. È l'alternativa allo scraping dei siti delle insegne:
+prezzi completi, con il consenso di chi li pubblica.
+
+## Inviti tramite link e uso senza rete
+
+- Ogni invito ha anche un link `https://<PUBLIC_BASE_URL>/i/CODICE`. Sul telefono con l'app installata
+  il link apre l'app ed entra nella lista (Android App Links, iOS Universal Links); altrimenti si apre
+  una pagina con il codice e le istruzioni. Il servizio pubblica `/.well-known/assetlinks.json` e
+  `/.well-known/apple-app-site-association`: configurare `ANDROID_CERT_SHA256` e `IOS_APP_ID`.
+  Per Android `tool/setup_platforms.sh` aggiunge i filtri dei link (`APP_LINK_HOST=dominio`); per iOS va
+  aggiunta in Xcode la capability Associated Domains (`applinks:dominio`).
+- Senza rete ogni modifica della lista (aggiunta, quantità, spunta, rimozione) resta valida sul
+  telefono e va in una coda locale, compattata e inviata in ordine al ritorno della connessione.
+
 ## Endpoint aggiuntivi rispetto alle specifiche
 
 - `GET /lists/frequent-products`: alimenta i chip "Compri spesso".
@@ -180,13 +199,14 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
 ## Stato della verifica
 
 - Backend: compilato e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e Redis; 31 unit test
-  Node, 5 test Python dell'Ingestion e
+  Node, 10 test Python dell'Ingestion e
   il test end-to-end passano. Il percorso: registrazione → lista → blacklist → confronto → spesa →
   metriche → offerte notificate senza doppioni → endpoint interni protetti → lista condivisa con un
   secondo utente e aggiornamento via WebSocket → chiusura con lo scontrino → uscita del membro →
-  prezzi Open Prices (con un server che simula l'API) → cancellazione account.
-- La CI su GitHub esegue tutto questo a ogni push, più analisi e test dell'app Flutter e la build
-  delle immagini Docker.
+  prezzi Open Prices (con un server che simula l'API) → feed partner → cancellazione account.
+  Il test copre anche link d'invito, pagina di atterraggio e file `.well-known`.
+- La CI su GitHub esegue tutto questo a ogni push, più analisi e test dell'app Flutter (modelli,
+  coda offline, schermate di login e profilo) e la build delle immagini Docker.
 - Ancora da provare su un ambiente reale: il gateway Traefik con Docker Compose, i manifest Kubernetes
   (solo sintassi YAML) e l'app su un telefono o emulatore.
 
@@ -199,6 +219,7 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
 
 ## Prossimi passi
 
-- Altre fonti reali (API o volantini digitali delle insegne) accanto a Open Prices.
-- Storico offline dell'app e sincronizzazione completa (drift), se le liste crescono.
-- Inviti tramite link (deep link) oltre al codice.
+- Accordi con negozi della zona per pubblicare il feed del listino.
+- Provare l'app su un telefono reale: link d'invito, notifiche push e lettura degli scontrini.
+- Database locale (drift) solo se servirà lo storico delle liste senza rete: oggi la coda offline
+  copre l'uso tipico.

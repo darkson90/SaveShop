@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../../../app/providers.dart';
 import '../../../core/widgets/async_view.dart';
@@ -16,7 +17,7 @@ class ShareScreen extends ConsumerStatefulWidget {
 }
 
 class _ShareScreenState extends ConsumerState<ShareScreen> {
-  ({String code, DateTime expiresAt})? _invite;
+  ({String code, String url, DateTime expiresAt})? _invite;
   bool _busy = false;
 
   Future<void> _createInvite(String listId) async {
@@ -109,7 +110,14 @@ class _ShareScreenState extends ConsumerState<ShareScreen> {
                         ),
                         Text('Valido fino al ${DateFormat('d MMM, HH:mm', 'it_IT').format(_invite!.expiresAt.toLocal())}'),
                         const SizedBox(height: 12),
-                        Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Wrap(alignment: WrapAlignment.center, spacing: 8, runSpacing: 8, children: [
+                          FilledButton.icon(
+                            onPressed: () => SharePlus.instance.share(ShareParams(
+                              text: 'Entra nella mia lista "${l.name}" su SaveShop: ${_invite!.url} (codice ${_invite!.code})',
+                            )),
+                            icon: const Icon(Icons.share),
+                            label: const Text('Invia link'),
+                          ),
                           OutlinedButton.icon(
                             onPressed: () {
                               Clipboard.setData(ClipboardData(text: _invite!.code));
@@ -118,7 +126,6 @@ class _ShareScreenState extends ConsumerState<ShareScreen> {
                             icon: const Icon(Icons.copy),
                             label: const Text('Copia'),
                           ),
-                          const SizedBox(width: 8),
                           TextButton(onPressed: _busy ? null : () => _createInvite(l.id), child: const Text('Nuovo codice')),
                         ]),
                       ]),

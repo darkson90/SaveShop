@@ -18,9 +18,13 @@ class ListRepository {
   Future<ShoppingList> getList(String id) async => ShoppingList.fromJson(await _api.get('/lists/$id'));
 
   /// Codice d'invito (solo il proprietario): valido 48 ore, fino a 5 membri.
-  Future<({String code, DateTime expiresAt})> createInvite(String listId) async {
+  Future<({String code, String url, DateTime expiresAt})> createInvite(String listId) async {
     final res = await _api.post('/lists/$listId/invites');
-    return (code: res['code'] as String, expiresAt: DateTime.parse(res['expiresAt'] as String));
+    return (
+      code: res['code'] as String,
+      url: res['url'] as String? ?? '',
+      expiresAt: DateTime.parse(res['expiresAt'] as String),
+    );
   }
 
   Future<String> join(String code) async => (await _api.post('/lists/join', body: {'code': code}))['listId'] as String;

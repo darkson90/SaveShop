@@ -53,19 +53,67 @@ class LocalStore {
   }
 }
 
-/// Operazione in attesa di invio (oggi: aggiunta di un articolo).
+/// Modifica fatta senza rete, in attesa di invio: aggiunta, modifica (quantità/spunta) o rimozione.
 class PendingOp {
-  PendingOp({required this.listId, required this.idempotencyKey, required this.body});
+  PendingOp({
+    required this.listId,
+    required this.idempotencyKey,
+    required this.body,
+    this.kind = 'add',
+    this.itemId,
+  });
 
+  /// 'add' | 'update' | 'remove'
+  final String kind;
   final String listId;
   final String idempotencyKey;
+
+  /// Per 'add' l'id temporaneo dell'articolo ("tmp-…"), per gli altri l'id sul server.
+  final String? itemId;
   final Map<String, dynamic> body;
 
   factory PendingOp.fromJson(Map<String, dynamic> j) => PendingOp(
+        kind: j['kind'] as String? ?? 'add', // le code salvate prima della v1.3 contengono solo aggiunte
         listId: j['listId'] as String,
         idempotencyKey: j['idempotencyKey'] as String,
+        itemId: j['itemId'] as String?,
         body: Map<String, dynamic>.from(j['body'] as Map),
       );
 
-  Map<String, dynamic> toJson() => {'listId': listId, 'idempotencyKey': idempotencyKey, 'body': body};
+  Map<String, dynamic> toJson() =>
+      {'kind': kind, 'listId': listId, 'idempotencyKey': idempotencyKey, 'itemId': itemId, 'body': body};
+
+  PendingOp copyWith({Map<String, dynamic>? body}) =>
+      PendingOp(kind: kind, listId: listId, idempotencyKey: idempotencyKey, itemId: itemId, body: body ?? this.body);
+
+  /// Riduce la coda prima dell'invio:
+  /// - più modifiche dello stesso articolo diventano una sola (vince l'ultimo valore);
+  /// - la quantità cambiata su un articolo non ancora inviato entra nella sua aggiunta;
+  /// - rimuovere un articolo mai inviato annulla l'aggiunta; rimuoverne uno inviato annulla le sue modifiche.
+  static List<PendingOp> compact(List<PendingOp> ops) {
+    final out = <PendingOp>[];
+    for (final op in ops) {
+      final addIdx = out.indexWhere((o) => o.kind == 'add' && o.itemId != null && o.itemId == op.itemId);
+      if (op.kind == 'update' && addIdx >= 0) {
+        if (op.body.containsKey('quantity')) {
+          out[addIdx] = out[addIdx].copyWith(body: {...out[addIdx].body, 'quantity': op.body['quantity']});
+        }
+        continue;
+      }
+      if (op.kind == 'remove' && addIdx >= 0) {
+        out.removeAt(addIdx);
+        continue;
+      }
+      if (op.kind == 'update') {
+        final prev = out.indexWhere((o) => o.kind == 'update' && o.itemId == op.itemId);
+        if (prev >= 0) {
+          out[prev] = out[prev].copyWith(body: {...out[prev].body, ...op.body});
+          continue;
+        }
+      }
+      if (op.kind == 'remove') out.removeWhere((o) => o.kind == 'update' && o.itemId == op.itemId);
+      out.add(op);
+    }
+    return out;
+  }
 }

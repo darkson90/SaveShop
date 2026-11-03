@@ -62,6 +62,10 @@ http:
       rule: "PathPrefix(`/api/v1/notifications`)"
       service: notification
       middlewares: [strip-service-headers, rate-limit]
+    invite-links:
+      rule: "PathPrefix(`/i/`) || PathPrefix(`/.well-known/assetlinks.json`) || PathPrefix(`/.well-known/apple-app-site-association`)"
+      service: list
+      middlewares: [strip-service-headers, rate-limit]
     internal-blocked:
       rule: "PathPrefix(`/api/v1/internal`)"
       service: auth

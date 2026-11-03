@@ -130,7 +130,9 @@ const ids = Array.from({ length: 32 }, (_, i) => `0190b000-0000-7000-8000-000000
 let promoProduct;
 for (const id of ids) {
   const res = await api('pricing', `/products/${id}/prices?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=25`);
-  if (res.items.some((p) => p.promo && !p.loyaltyOnly)) { promoProduct = id; break; }
+  // Solo promo dei listini dimostrativi: sono quelli che l'ingestion rilancia qui sotto.
+  const demoStore = /^(SuperRisparmio|MercatoPiù|Discount Alpino|Bottega Fresca)/;
+  if (res.items.some((p) => p.promo && !p.loyaltyOnly && demoStore.test(p.name))) { promoProduct = id; break; }
 }
 assert.ok(promoProduct, 'i listini dimostrativi contengono almeno una promo');
 const list2 = await api('list', '/lists', { method: 'POST', body: { name: 'Seconda spesa' } });
@@ -169,6 +171,13 @@ for (const raw of ['2 latte', 'mozzarella', 'spaghetti']) {
 }
 const invite = await api('list', `/lists/${shared.id}/invites`, { method: 'POST' });
 assert.match(invite.code, /^[A-Z2-9]{6}$/);
+assert.ok(invite.url.endsWith(`/i/${invite.code}`), 'link d\'invito');
+const landing = await fetch(`${base('list')}/i/${invite.code}`);
+assert.equal(landing.status, 200);
+assert.ok((await landing.text()).includes(invite.code));
+assert.equal((await fetch(`${base('list')}/i/XXXXXX0`)).status, 404);
+const assetLinks = await (await fetch(`${base('list')}/.well-known/assetlinks.json`)).json();
+assert.equal(assetLinks[0].target.namespace, 'android_app');
 const emailB = `test-b+${Date.now()}@example.com`;
 const tokenB = (await api('auth', '/auth/register', { method: 'POST', body: { email: emailB, password: 'password-sicura' } })).accessToken;
 await api('list', `/lists/${shared.id}`, { as: tokenB, expect: [404] }); // non ancora membro
@@ -278,6 +287,26 @@ if (process.env.INGESTION_CMD) {
   });
   assert.deepEqual([lattePrices.unitPrice, lattePrices.promo], [0.89, true]);
   step(`Open Prices: creati "${market.name}" e "${gnocchi.name}", latte in offerta a ${lattePrices.unitPrice} €`);
+
+  // Feed di un negozio partner (docs/feed-format.md)
+  const feedRun = await promisify(exec)(process.env.INGESTION_CMD, {
+    env: { ...process.env, INGESTION_SOURCES: 'feeds', INGESTION_FEEDS: 'tests/fixtures/feed-esempio.json' },
+  });
+  process.stdout.write(feedRun.stdout);
+  const partner = (await api('store', `/stores?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=5`)).items.find((s) => s.name === 'Alimentari Rossi Vodo');
+  assert.ok(partner, 'negozio del feed creato');
+  const piave = await eventually(async () => {
+    const r = await api('catalog', '/products/suggest?q=piave');
+    assert.equal(r.items[0]?.category, 'Latticini');
+    return r.items[0];
+  });
+  const piavePrices = await eventually(async () => {
+    const r = await api('pricing', `/products/${piave.id}/prices?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=5`);
+    assert.ok(r.items.length);
+    return r.items;
+  });
+  assert.equal(piavePrices[0].unitPrice, 4.2);
+  step(`feed partner: "${partner.name}" con "${piave.name}" a ${piavePrices[0].unitPrice} €`);
 }
 
 // 11. Ripristino negozio e cancellazione account

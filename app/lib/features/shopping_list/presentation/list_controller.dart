@@ -64,9 +64,10 @@ class ListController extends AsyncNotifier<ShoppingList> {
       final saved = await _repo.addItem(list.id, body, key);
       _replace(temp.id, saved);
       ref.invalidate(frequentProductsProvider);
+      unawaited(_flushQueue()); // la rete è tornata: inviamo anche ciò che era rimasto in coda
     } on ApiException catch (e) {
       if (e.isNetwork) {
-        await _local.enqueue(PendingOp(listId: list.id, idempotencyKey: key, body: body));
+        await _local.enqueue(PendingOp(listId: list.id, idempotencyKey: key, body: body, itemId: temp.id));
       } else {
         _remove(temp.id);
         rethrow;
@@ -77,12 +78,12 @@ class ListController extends AsyncNotifier<ShoppingList> {
   Future<void> setQuantity(ListItem item, double quantity) async {
     if (quantity <= 0) return remove(item);
     _replace(item.id, item.copyWith(quantity: quantity));
-    await _sync(item, () => _repo.updateItem(state.value!.id, item.id, {'quantity': quantity}));
+    await _sync(item, {'quantity': quantity});
   }
 
   Future<void> toggle(ListItem item) async {
     _replace(item.id, item.copyWith(checked: !item.checked));
-    await _sync(item, () => _repo.updateItem(state.value!.id, item.id, {'checked': !item.checked}));
+    await _sync(item, {'checked': !item.checked});
   }
 
   Future<void> matchProduct(ListItem item, String productId) async {
@@ -91,12 +92,22 @@ class ListController extends AsyncNotifier<ShoppingList> {
   }
 
   Future<void> remove(ListItem item) async {
+    final list = state.valueOrNull;
+    if (list == null) return;
     _remove(item.id);
-    if (item.pending) return;
+    if (item.pending) {
+      // Mai arrivato al server: basta togliere l'aggiunta dalla coda.
+      await _queueOffline(PendingOp(kind: 'remove', listId: list.id, idempotencyKey: _uuid.v4(), itemId: item.id, body: const {}));
+      return;
+    }
     try {
-      await _repo.removeItem(state.value!.id, item.id);
-    } on ApiException {
-      ref.invalidateSelf();
+      await _repo.removeItem(list.id, item.id);
+    } on ApiException catch (e) {
+      if (e.isNetwork) {
+        await _queueOffline(PendingOp(kind: 'remove', listId: list.id, idempotencyKey: _uuid.v4(), itemId: item.id, body: const {}));
+      } else {
+        ref.invalidateSelf();
+      }
     }
   }
 
@@ -131,6 +142,7 @@ class ListController extends AsyncNotifier<ShoppingList> {
     final current = state.valueOrNull;
     if (current == null) return;
     try {
+      await _flushQueue();
       final fresh = await _repo.getList(current.id);
       final pending = current.items.where((i) => i.pending);
       _set(fresh.copyWith(items: [...fresh.items, ...pending]));
@@ -157,27 +169,67 @@ class ListController extends AsyncNotifier<ShoppingList> {
     });
   }
 
-  Future<void> _sync(ListItem original, Future<ListItem> Function() call) async {
-    if (original.pending) return;
+  /// Invia una modifica; senza rete la mette in coda e mantiene il valore mostrato.
+  Future<void> _sync(ListItem original, Map<String, dynamic> body) async {
+    final list = state.valueOrNull;
+    if (list == null) return;
+    if (original.pending) {
+      await _queueOffline(PendingOp(kind: 'update', listId: list.id, idempotencyKey: _uuid.v4(), itemId: original.id, body: body));
+      return;
+    }
     try {
-      _replace(original.id, await call());
-    } on ApiException {
-      _replace(original.id, original);
+      _replace(original.id, await _repo.updateItem(list.id, original.id, body));
+    } on ApiException catch (e) {
+      if (e.isNetwork) {
+        await _queueOffline(PendingOp(kind: 'update', listId: list.id, idempotencyKey: _uuid.v4(), itemId: original.id, body: body));
+      } else {
+        _replace(original.id, original);
+      }
     }
   }
 
+  Future<void> _queueOffline(PendingOp op) async {
+    await _local.writeQueue(PendingOp.compact([...await _local.readQueue(), op]));
+  }
+
+  bool _flushing = false;
+
+  /// Rinvia la coda nell'ordine in cui le modifiche sono state fatte.
   Future<void> _flushQueue() async {
-    final queue = await _local.readQueue();
-    if (queue.isEmpty) return;
-    final remaining = <PendingOp>[];
-    for (final op in queue) {
-      try {
-        await _repo.addItem(op.listId, op.body, op.idempotencyKey);
-      } on ApiException catch (e) {
-        if (e.isNetwork) remaining.add(op); // altri errori: l'operazione non è più valida, la scartiamo
+    if (_flushing) return;
+    _flushing = true;
+    try {
+      final queue = PendingOp.compact(await _local.readQueue());
+      if (queue.isEmpty) return;
+      final remaining = <PendingOp>[];
+      var offline = false;
+      for (final op in queue) {
+        if (offline) {
+          remaining.add(op);
+          continue;
+        }
+        try {
+          switch (op.kind) {
+            case 'update':
+              await _repo.updateItem(op.listId, op.itemId!, op.body);
+            case 'remove':
+              await _repo.removeItem(op.listId, op.itemId!);
+            default:
+              await _repo.addItem(op.listId, op.body, op.idempotencyKey);
+          }
+        } on ApiException catch (e) {
+          // Ancora senza rete: si riprova più tardi, rispettando l'ordine.
+          // Altri errori (es. articolo già rimosso da un altro membro): l'operazione non vale più.
+          if (e.isNetwork) {
+            offline = true;
+            remaining.add(op);
+          }
+        }
       }
+      await _local.writeQueue(remaining);
+    } finally {
+      _flushing = false;
     }
-    await _local.writeQueue(remaining);
   }
 
   void _set(ShoppingList list) {
