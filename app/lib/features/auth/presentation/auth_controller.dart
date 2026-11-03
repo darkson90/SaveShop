@@ -37,6 +37,7 @@ class AuthController extends AsyncNotifier<bool> {
   }
 
   Future<void> logout() async {
+    await ref.read(pushServiceProvider).unregister();
     await _repo.logout();
     await ref.read(localStoreProvider).clear();
     _resetUserState();

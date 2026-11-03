@@ -34,13 +34,16 @@ export class ProblemFilter implements ExceptionFilter {
 export async function callService<T>(
   baseUrl: string,
   path: string,
-  opts: { method?: string; body?: unknown; token?: string } = {},
+  opts: { method?: string; body?: unknown; token?: string; asService?: boolean; actingUser?: string } = {},
 ): Promise<T> {
   const res = await fetch(`${baseUrl}/api/v1${path}`, {
     method: opts.method ?? 'GET',
     headers: {
       'content-type': 'application/json',
       ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+      // Chiamata di servizio (senza JWT utente): token condiviso + eventuale utente impersonato.
+      ...(opts.asService || opts.actingUser ? { 'x-service-token': process.env.SERVICE_TOKEN ?? '' } : {}),
+      ...(opts.actingUser ? { 'x-acting-user': opts.actingUser } : {}),
     },
     body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
     signal: AbortSignal.timeout(3000),

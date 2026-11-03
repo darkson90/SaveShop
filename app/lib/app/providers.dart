@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/location/location_service.dart';
 import '../core/network/api_client.dart';
+import '../core/push/push_service.dart';
 import '../core/storage/local_store.dart';
 import '../core/storage/token_storage.dart';
 import '../features/auth/presentation/auth_controller.dart';
@@ -16,3 +17,5 @@ final apiClientProvider = Provider<ApiClient>((ref) {
     onSessionExpired: () => ref.read(authControllerProvider.notifier).sessionExpired(),
   );
 });
+
+final pushServiceProvider = Provider<PushService>((ref) => PushService(ref.watch(apiClientProvider)));

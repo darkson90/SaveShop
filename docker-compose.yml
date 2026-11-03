@@ -1,4 +1,4 @@
-# Ambiente di sviluppo completo: gateway, 7 microservizi Node, ingestion Python,
+# Ambiente di sviluppo completo: gateway, 8 microservizi Node, ingestion Python,
 # PostgreSQL (un database per servizio), RabbitMQ e Redis.
 #   ./scripts/gen-keys.sh && docker compose up --build
 # API su http://localhost:8080/api/v1, console RabbitMQ su http://localhost:15672
@@ -24,13 +24,14 @@ services:
     ports: ["8080:8080"]
     volumes:
       - ./gateway/dynamic.yml:/etc/traefik/dynamic.yml:ro
-    depends_on: [auth, user, store, catalog, list, pricing, analytics]
+    depends_on: [auth, user, store, catalog, list, pricing, analytics, notification]
 
   auth:
     <<: *node-service
     build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: auth } }
     environment:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/auth_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
       JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
     volumes:
       - ./keys/jwt-public.pem:/run/keys/jwt-public.pem:ro
@@ -41,6 +42,7 @@ services:
     build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: user } }
     environment:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/user_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
       LOYALTY_KEY: ${LOYALTY_KEY:-dev-only-loyalty-key-change-me}
 
   store:
@@ -48,24 +50,28 @@ services:
     build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: store } }
     environment:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/store_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
 
   catalog:
     <<: *node-service
     build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: catalog } }
     environment:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/catalog_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
 
   list:
     <<: *node-service
     build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: list } }
     environment:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/list_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
 
   pricing:
     <<: *node-service
     build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: pricing } }
     environment:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/pricing_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
       REDIS_URL: redis://redis:6379/0
 
   analytics:
@@ -73,12 +79,23 @@ services:
     build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: analytics } }
     environment:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/analytics_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
       REDIS_URL: redis://redis:6379/1
+
+  notification:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: notification } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/notification_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
+      # Con un account di servizio Firebase le push partono davvero; senza, finiscono nel log.
+      # FCM_SERVICE_ACCOUNT_FILE: /run/secrets/fcm.json
 
   ingestion:
     build: ./services/ingestion
     environment:
       AMQP_URL: amqp://guest:guest@rabbitmq:5672
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
       INGESTION_MODE: loop        # "once" per una singola esecuzione (CronJob in produzione)
       INGESTION_INTERVAL_HOURS: "24"
     depends_on:

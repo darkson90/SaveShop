@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
-import { optNumber, PG_POOL, Public, reqString, reqUuid } from '@spesa/common';
+import { optNumber, PG_POOL, reqString, reqUuid, ServiceOnly } from '@spesa/common';
 import { Pool } from 'pg';
 
 /**
@@ -81,7 +81,7 @@ export class CatalogController {
   }
 
   /** Interno (List Service): abbina il testo libero al prodotto più probabile. */
-  @Public()
+  @ServiceOnly()
   @Get('internal/products/match')
   async match(@Query('q') q: string) {
     const { rows } = await this.pool.query(SEARCH_SQL, [reqString({ q }, 'q', 120), 1]);
@@ -90,7 +90,7 @@ export class CatalogController {
   }
 
   /** Interno: dettagli di più prodotti in una chiamata (List, Pricing). */
-  @Public()
+  @ServiceOnly()
   @Post('internal/products/batch')
   async batch(@Body() body: any) {
     const ids: string[] = Array.isArray(body?.ids) ? body.ids.slice(0, 200).map((id: any) => reqUuid(id, 'ids')) : [];
@@ -100,7 +100,7 @@ export class CatalogController {
   }
 
   /** Interno (Ingestion): mappa EAN -> prodotto. */
-  @Public()
+  @ServiceOnly()
   @Get('internal/products/eans')
   async eans() {
     const { rows } = await this.pool.query('SELECT id, ean FROM products WHERE ean IS NOT NULL');

@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: Backend (build, unit test, end-to-end)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: spesa
+          POSTGRES_PASSWORD: spesa
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U spesa" --health-interval 5s --health-retries 20
+      rabbitmq:
+        image: rabbitmq:3.13
+        ports: ["5672:5672"]
+        options: >-
+          --health-cmd "rabbitmq-diagnostics -q ping" --health-interval 10s --health-retries 20
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+    env:
+      PGPASSWORD: spesa
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Database per servizio
+        run: psql -h localhost -U spesa -d postgres -f infra/postgres/init-databases.sql
+
+      - name: Build
+        run: |
+          npm ci || npm install
+          npm run build
+
+      - name: Unit test
+        run: npm test
+
+      - name: Avvio servizi
+        run: |
+          ./scripts/gen-keys.sh
+          ./scripts/dev-local.sh
+          for port in 3001 3002 3003 3004 3005 3006 3007 3008; do
+            timeout 60 bash -c "until curl -sf localhost:$port/health >/dev/null; do sleep 1; done"
+          done
+
+      - name: Test end-to-end (con ingestion e notifiche)
+        run: |
+          pip install -r services/ingestion/requirements.txt
+          cd services/ingestion && SERVICE_TOKEN=dev-only-service-token CATALOG_URL=http://localhost:3004 \
+            STORE_URL=http://localhost:3003 AMQP_URL=amqp://guest:guest@localhost:5672 INGESTION_MODE=once \
+            python -m ingestion && cd ../..
+          INGESTION_CMD="cd services/ingestion && SERVICE_TOKEN=dev-only-service-token CATALOG_URL=http://localhost:3004 STORE_URL=http://localhost:3003 AMQP_URL=amqp://guest:guest@localhost:5672 INGESTION_MODE=once python -m ingestion" \
+            npm run e2e
+
+      - name: Log dei servizi
+        if: failure()
+        run: tail -n 80 .logs/*.log
+
+  app:
+    name: App Flutter (analyze, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
+
+  images:
+    name: Immagini Docker
+    runs-on: ubuntu-latest
+    needs: backend
+    strategy:
+      matrix:
+        service: [auth, user, store, catalog, list, pricing, analytics, notification]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/node.Dockerfile
+          build-args: SERVICE=${{ matrix.service }}
+          tags: spesa-smart/${{ matrix.service }}:${{ github.sha }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.service }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.service }}
+
+  ingestion-image:
+    name: Immagine ingestion
+    runs-on: ubuntu-latest
+    needs: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: services/ingestion
+          tags: spesa-smart/ingestion:${{ github.sha }}
+          push: false

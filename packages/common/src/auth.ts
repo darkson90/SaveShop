@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import {
   CanActivate,
@@ -44,15 +45,49 @@ export const IS_PUBLIC = 'isPublic';
 /** Marca un endpoint come accessibile senza JWT (login, registrazione, health). */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
 
-/** Guard globale: ogni servizio verifica da sé la firma del JWT inoltrato dal gateway. */
+export const SERVICE_ONLY = 'serviceOnly';
+/** Endpoint chiamabile solo da un altro servizio con il token di servizio (mai da un utente). */
+export const ServiceOnly = () => SetMetadata(SERVICE_ONLY, true);
+
+/** Header delle chiamate tra servizi senza un utente collegato (job in background). Il gateway li rimuove. */
+export const SERVICE_TOKEN_HEADER = 'x-service-token';
+export const ACTING_USER_HEADER = 'x-acting-user';
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isValidServiceToken(value: unknown): boolean {
+  const expected = process.env.SERVICE_TOKEN;
+  if (!expected || typeof value !== 'string') return false;
+  const a = Buffer.from(value);
+  const b = Buffer.from(expected);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+/**
+ * Guard globale: ogni servizio verifica da sé la firma del JWT inoltrato dal gateway.
+ * In alternativa accetta il token di servizio con l'utente per conto del quale si agisce
+ * (es. il Notification Service che cerca i negozi ammessi di un utente).
+ */
 @Injectable()
 export class JwtAuthGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
-    const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [context.getHandler(), context.getClass()]);
-    if (isPublic) return true;
+    const targets = [context.getHandler(), context.getClass()];
     const req = context.switchToHttp().getRequest();
+    const serviceCall = isValidServiceToken(req.headers[SERVICE_TOKEN_HEADER]);
+    if (this.reflector.getAllAndOverride<boolean>(SERVICE_ONLY, targets)) {
+      if (!serviceCall) throw new UnauthorizedException('Riservato ai servizi interni');
+      return true;
+    }
+    if (this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, targets)) return true;
+    if (serviceCall) {
+      const acting = req.headers[ACTING_USER_HEADER];
+      if (typeof acting !== 'string' || !UUID_RE.test(acting)) throw new UnauthorizedException('Utente per conto del quale agire mancante');
+      req.user = { userId: acting, email: '' } satisfies AuthUser;
+      req.serviceCall = true;
+      return true;
+    }
     const header: string | undefined = req.headers.authorization;
     if (!header?.startsWith('Bearer ')) throw new UnauthorizedException('Token mancante');
     try {

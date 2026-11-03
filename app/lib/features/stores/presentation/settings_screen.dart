@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../app/providers.dart';
 import '../../auth/presentation/auth_controller.dart';
+import '../../offers/offers.dart';
 import '../data/stores_repository.dart';
 import 'stores_providers.dart';
 
@@ -23,6 +25,36 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     } catch (e) {
       _snack(e.toString());
     }
+  }
+
+  /// Le offerte richiedono una posizione di casa: se manca la proponiamo dal GPS.
+  Future<void> _toggleOffers(bool enabled) async {
+    try {
+      if (enabled && ref.read(profileProvider).valueOrNull?.homeLat == null) await _setHomeHere(silent: true);
+      await ref.read(apiClientProvider).patch('/notifications/preferences', body: {'offersEnabled': enabled});
+      ref.invalidate(offersEnabledProvider);
+      final push = ref.read(pushServiceProvider);
+      if (enabled && !await push.register()) {
+        _snack(push.isAvailable
+            ? 'Permesso notifiche negato: vedrai le offerte nella schermata "Offerte per te".'
+            : 'Notifiche push non configurate: vedrai le offerte nella schermata "Offerte per te".');
+      }
+      if (!enabled) await push.unregister();
+    } catch (e) {
+      _snack(e.toString());
+    }
+  }
+
+  Future<void> _setHomeHere({bool silent = false}) async {
+    final point = await ref.read(locationServiceProvider).current();
+    if (!point.fromGps) {
+      _snack('Posizione non disponibile: attiva il GPS e concedi il permesso.');
+      return;
+    }
+    await ref.read(storesRepositoryProvider).updateHome(point.lat, point.lng);
+    ref.invalidate(profileProvider);
+    ref.invalidate(searchContextProvider);
+    if (!silent) _snack('Posizione di casa aggiornata');
   }
 
   Future<void> _addCard() async {
@@ -83,6 +115,21 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           label: '${radius.round()} km',
           onChanged: (v) => setState(() => _radius = v),
           onChangeEnd: _saveRadius,
+        ),
+        ListTile(
+          leading: const Icon(Icons.home_outlined),
+          title: const Text('Posizione di casa'),
+          subtitle: Text(profile?.homeLat == null
+              ? 'Non impostata: usata quando il GPS non è disponibile e per le offerte'
+              : 'Impostata · tocca per usare la posizione attuale'),
+          onTap: () => _setHomeHere(),
+        ),
+        SwitchListTile(
+          secondary: const Icon(Icons.notifications_outlined),
+          title: const Text('Avvisami delle offerte'),
+          subtitle: const Text('Promo sui prodotti che compri spesso, nei negozi vicini a casa e non esclusi'),
+          value: ref.watch(offersEnabledProvider).valueOrNull ?? false,
+          onChanged: _toggleOffers,
         ),
         const Divider(),
         ListTile(

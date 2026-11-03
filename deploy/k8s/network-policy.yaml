@@ -1,0 +1,15 @@
+# Solo il gateway e gli altri pod del progetto raggiungono i microservizi:
+# gli endpoint /internal non sono mai esposti fuori dal namespace.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: services-internal-only
+spec:
+  podSelector:
+    matchExpressions:
+      - { key: app.kubernetes.io/name, operator: NotIn, values: [gateway] }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/part-of: spesa-smart }

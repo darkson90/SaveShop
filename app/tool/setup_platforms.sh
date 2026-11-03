@@ -19,4 +19,5 @@ if ! grep -q NSLocationWhenInUseUsageDescription "$PLIST"; then
 fi
 
 flutter pub get
+echo "Per le notifiche push: flutterfire configure (vedi README)"
 echo "Piattaforme pronte. Avvio: flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8080/api/v1"

@@ -1,0 +1,496 @@
+# Generato per gli 8 microservizi Node: Deployment + Service + HorizontalPodAutoscaler ciascuno.
+# DATABASE_URL arriva dal Secret spesa-db (una chiave per servizio), vedi secrets.example.yaml.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: auth
+  labels: { app.kubernetes.io/name: auth, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: auth }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: auth, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: auth
+          image: spesa-smart/auth:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: auth } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+            - name: JWT_PRIVATE_KEY_FILE
+              value: "/run/keys/jwt-private.pem"
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-private.pem, path: jwt-private.pem }
+              - { key: jwt-public.pem, path: jwt-public.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: auth
+spec:
+  selector: { app.kubernetes.io/name: auth }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: auth
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: auth }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: user
+  labels: { app.kubernetes.io/name: user, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: user }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: user, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: user
+          image: spesa-smart/user:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: user } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+            - name: LOYALTY_KEY
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: loyalty-key } }
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-public.pem, path: jwt-public.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: user
+spec:
+  selector: { app.kubernetes.io/name: user }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: user
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: user }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: store
+  labels: { app.kubernetes.io/name: store, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: store }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: store, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: store
+          image: spesa-smart/store:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: store } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-public.pem, path: jwt-public.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: store
+spec:
+  selector: { app.kubernetes.io/name: store }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: store
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: store }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: catalog
+  labels: { app.kubernetes.io/name: catalog, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: catalog }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: catalog, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: catalog
+          image: spesa-smart/catalog:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: catalog } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-public.pem, path: jwt-public.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: catalog
+spec:
+  selector: { app.kubernetes.io/name: catalog }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: catalog
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: catalog }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: list
+  labels: { app.kubernetes.io/name: list, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: list }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: list, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: list
+          image: spesa-smart/list:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: list } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-public.pem, path: jwt-public.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: list
+spec:
+  selector: { app.kubernetes.io/name: list }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: list
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: list }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pricing
+  labels: { app.kubernetes.io/name: pricing, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: pricing }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: pricing, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: pricing
+          image: spesa-smart/pricing:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: pricing } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+            - name: REDIS_URL
+              value: "redis://redis:6379/0"
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-public.pem, path: jwt-public.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pricing
+spec:
+  selector: { app.kubernetes.io/name: pricing }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: pricing
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: pricing }
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics
+  labels: { app.kubernetes.io/name: analytics, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: analytics }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: analytics, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: analytics
+          image: spesa-smart/analytics:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: analytics } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+            - name: REDIS_URL
+              value: "redis://redis:6379/1"
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-public.pem, path: jwt-public.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics
+spec:
+  selector: { app.kubernetes.io/name: analytics }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: analytics
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: analytics }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification
+  labels: { app.kubernetes.io/name: notification, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: notification }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: notification, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: notification
+          image: spesa-smart/notification:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: notification } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+            - name: FCM_SERVICE_ACCOUNT_FILE
+              value: /run/secrets/fcm/service-account.json
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+            - { name: fcm, mountPath: /run/secrets/fcm, readOnly: true }
+          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { memory: 384Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-public.pem, path: jwt-public.pem }
+        - name: fcm
+          secret: { secretName: spesa-fcm, optional: true }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: notification
+spec:
+  selector: { app.kubernetes.io/name: notification }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: notification
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: notification }
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }

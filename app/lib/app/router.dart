@@ -7,6 +7,7 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/comparison/domain/models.dart';
 import '../features/comparison/presentation/comparison_screen.dart';
 import '../features/comparison/presentation/store_detail_screen.dart';
+import '../features/offers/offers.dart';
 import '../features/profile/presentation/profile_screen.dart';
 import '../features/shopping_list/presentation/list_screen.dart';
 import '../features/stores/presentation/excluded_stores_screen.dart';
@@ -52,6 +53,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           StatefulShellBranch(routes: [GoRoute(path: '/profilo', builder: (_, __) => const ProfileScreen())]),
         ],
       ),
+      GoRoute(path: '/offerte', builder: (_, __) => const OffersScreen()),
       GoRoute(
         path: '/impostazioni',
         builder: (_, __) => const SettingsScreen(),

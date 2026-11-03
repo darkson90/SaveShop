@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # Avvia i servizi Node in locale senza Docker (richiede PostgreSQL con PostGIS, RabbitMQ e Redis già attivi).
-# Porte: auth 3001, user 3002, store 3003, catalog 3004, list 3005, pricing 3006, analytics 3007.
+# Porte: auth 3001, user 3002, store 3003, catalog 3004, list 3005, pricing 3006, analytics 3007, notification 3008.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PG=${PG:-postgres://spesa:spesa@localhost:5432}
 LOGS=${LOGS:-./.logs}
 mkdir -p "$LOGS"
 
+export SERVICE_TOKEN=${SERVICE_TOKEN:-dev-only-service-token}
 export AMQP_URL=${AMQP_URL:-amqp://guest:guest@localhost:5672}
 export JWT_PUBLIC_KEY_FILE=$PWD/keys/jwt-public.pem
 export AUTH_URL=http://localhost:3001 USER_URL=http://localhost:3002 STORE_URL=http://localhost:3003
@@ -26,3 +27,4 @@ start catalog 3004
 start list 3005
 start pricing 3006 REDIS_URL=redis://localhost:6379/0
 start analytics 3007 REDIS_URL=redis://localhost:6379/1
+start notification 3008

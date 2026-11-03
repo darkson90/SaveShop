@@ -19,7 +19,7 @@ import {
   Events,
   optNumber,
   PG_POOL,
-  Public,
+  ServiceOnly,
   reqNumber,
   reqUuid,
   uuidv7,
@@ -138,7 +138,7 @@ export class StoreController {
   }
 
   /** Interno (Ingestion): risolve il codice del punto vendita della fonte esterna. */
-  @Public()
+  @ServiceOnly()
   @Get('internal/stores/by-ref')
   async byRef() {
     const { rows } = await this.pool.query('SELECT id, external_ref FROM stores WHERE external_ref IS NOT NULL');

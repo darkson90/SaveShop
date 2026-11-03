@@ -6,3 +6,4 @@ CREATE DATABASE catalog_db;
 CREATE DATABASE list_db;
 CREATE DATABASE pricing_db;
 CREATE DATABASE analytics_db;
+CREATE DATABASE notification_db;

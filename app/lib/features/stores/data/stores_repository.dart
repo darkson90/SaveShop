@@ -54,6 +54,10 @@ class StoresRepository {
 
   Future<UserProfile> updateRadius(int km) async => UserProfile.fromJson(await _api.patch('/users/me', body: {'defaultRadiusKm': km}));
 
+  /// La posizione di casa serve alle offerte (negozi vicini anche quando l'app è chiusa).
+  Future<UserProfile> updateHome(double lat, double lng) async =>
+      UserProfile.fromJson(await _api.patch('/users/me', body: {'home': {'lat': lat, 'lng': lng}}));
+
   Future<void> deleteAccount() => _api.delete('/users/me');
 
   Future<List<Chain>> chains() async {

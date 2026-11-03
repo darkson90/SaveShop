@@ -3,6 +3,7 @@ import datetime as dt
 import json
 import os
 import time
+import urllib.error
 import urllib.request
 import uuid
 
@@ -14,6 +15,7 @@ from .sources.demo import DemoSource
 AMQP_URL = os.environ.get("AMQP_URL", "amqp://guest:guest@rabbitmq:5672")
 CATALOG_URL = os.environ.get("CATALOG_URL", "http://catalog:3000")
 STORE_URL = os.environ.get("STORE_URL", "http://store:3000")
+SERVICE_TOKEN = os.environ.get("SERVICE_TOKEN", "")
 EXCHANGE = "spesa.events"
 BATCH_SIZE = 500
 
@@ -21,8 +23,11 @@ BATCH_SIZE = 500
 def get_json(url: str, retries: int = 30) -> dict:
     for attempt in range(1, retries + 1):
         try:
-            with urllib.request.urlopen(url, timeout=10) as res:
+            req = urllib.request.Request(url, headers={"X-Service-Token": SERVICE_TOKEN})
+            with urllib.request.urlopen(req, timeout=10) as res:
                 return json.loads(res.read())
+        except urllib.error.HTTPError:
+            raise  # 401/404: configurazione errata, inutile riprovare
         except OSError:
             if attempt == retries:
                 raise

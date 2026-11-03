@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 
 import '../../../core/widgets/async_view.dart';
 import '../../../core/widgets/format.dart';
+import '../../offers/offers.dart';
 import '../domain/models.dart';
 import 'list_controller.dart';
 import 'widgets/quick_add_field.dart';
@@ -18,6 +19,7 @@ class ListScreen extends ConsumerWidget {
       appBar: AppBar(
         title: Text(list.valueOrNull?.name ?? 'Lista'),
         actions: [
+          OffersBell(onPressed: () => context.push('/offerte')),
           IconButton(
             tooltip: 'Confronta prezzi',
             icon: const Icon(Icons.compare_arrows),

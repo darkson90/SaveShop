@@ -2,9 +2,10 @@
 // Con Docker: GATEWAY_URL=http://localhost:8080 npm run e2e
 // In locale (scripts/dev-local.sh): npm run e2e
 import assert from 'node:assert/strict';
+import { execSync } from 'node:child_process';
 
 const GATEWAY = process.env.GATEWAY_URL;
-const PORTS = { auth: 3001, user: 3002, store: 3003, catalog: 3004, list: 3005, pricing: 3006, analytics: 3007 };
+const PORTS = { auth: 3001, user: 3002, store: 3003, catalog: 3004, list: 3005, pricing: 3006, analytics: 3007, notification: 3008 };
 const base = (svc) => GATEWAY ?? `http://localhost:${PORTS[svc]}`;
 const HOME = { lat: 46.419, lng: 12.245 }; // Vodo di Cadore, coerente con i dati seed
 
@@ -115,7 +116,49 @@ const shares = stats.categories.reduce((s, c) => s + c.sharePct, 0);
 assert.ok(Math.abs(shares - 100) < 0.5);
 step(`metriche: risparmio ${stats.totalSavedEur} €, medio ${stats.avgSavingPct}%, top 3 ${stats.topProducts.map((p) => p.name).join(', ')}`);
 
-// 7. Ripristino negozio e cancellazione account
+// 7. Notifiche offerte (v1.1): consenso, posizione di casa, prodotto frequente in promo
+await api('user', '/users/me', { method: 'PATCH', body: { home: HOME, defaultRadiusKm: 25 } });
+assert.equal((await api('notification', '/notifications/preferences')).offersEnabled, false, 'consenso esplicito, spento di default');
+await api('notification', '/notifications/preferences', { method: 'PATCH', body: { offersEnabled: true } });
+await api('notification', '/notifications/devices', { method: 'PUT', body: { token: `e2e-${Date.now()}`, platform: 'android' } });
+await api('store', '/users/me/excluded-stores', { method: 'POST', body: { storeId: cortina.id }, expect: [409] }); // già escluso
+const ids = Array.from({ length: 32 }, (_, i) => `0190b000-0000-7000-8000-000000000${101 + i}`);
+let promoProduct;
+for (const id of ids) {
+  const res = await api('pricing', `/products/${id}/prices?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=25`);
+  if (res.items.some((p) => p.promo && !p.loyaltyOnly)) { promoProduct = id; break; }
+}
+assert.ok(promoProduct, 'i listini dimostrativi contengono almeno una promo');
+const list2 = await api('list', '/lists', { method: 'POST', body: { name: 'Seconda spesa' } });
+for (let i = 0; i < 2; i++) await api('list', `/lists/${list2.id}/items`, { method: 'POST', body: { productId: promoProduct } });
+step('consenso alle offerte, dispositivo registrato, prodotto in promo aggiunto 2 volte');
+
+if (process.env.INGESTION_CMD) {
+  await new Promise((r) => setTimeout(r, 1500)); // il relay dell'outbox inoltra ItemAdded
+  execSync(process.env.INGESTION_CMD, { stdio: 'inherit' });
+  const inbox = await eventually(async () => {
+    const res = await api('notification', '/notifications');
+    assert.ok(res.items.some((n) => n.productId === promoProduct), 'offerta segnalata');
+    return res;
+  });
+  assert.ok(!inbox.items.some((n) => n.storeId === cortina.id), 'nessuna offerta dal negozio escluso');
+  execSync(process.env.INGESTION_CMD, { stdio: 'ignore' });
+  await new Promise((r) => setTimeout(r, 1500));
+  const again = await api('notification', '/notifications');
+  assert.equal(again.items.length, inbox.items.length, 'nessun doppione alla seconda esecuzione');
+  await api('notification', '/notifications/read', { method: 'POST' });
+  assert.equal((await api('notification', '/notifications')).unread, 0);
+  step(`offerte per te: ${inbox.items.length} (es. ${inbox.items[0].productName} a ${inbox.items[0].promoPrice} € da ${inbox.items[0].storeName}), nessun doppione`);
+} else {
+  console.log('… notifiche: imposta INGESTION_CMD per verificare la segnalazione delle offerte');
+}
+
+// Gli endpoint interni non accettano chiamate senza token di servizio
+const internal = await fetch(`${base('catalog')}/api/v1/internal/products/eans`);
+assert.ok([401, 404].includes(internal.status));
+step('endpoint interni protetti');
+
+// 8. Ripristino negozio e cancellazione account
 await api('store', `/users/me/excluded-stores/${excl.id}`, { method: 'DELETE' });
 await api('user', '/users/me', { method: 'DELETE' });
 await eventually(() => api('auth', '/auth/login', { method: 'POST', body: { email, password: 'password-sicura' }, expect: [401] }));

@@ -2,6 +2,12 @@
 # Ogni servizio verifica comunque la firma del JWT; gli endpoint /api/v1/internal/* non sono esposti.
 http:
   middlewares:
+    # I client non possono spacciarsi per un servizio interno.
+    strip-service-headers:
+      headers:
+        customRequestHeaders:
+          X-Service-Token: ""
+          X-Acting-User: ""
     rate-limit:
       rateLimit:
         average: 60      # richieste al minuto per IP (in produzione: per utente, via header)
@@ -17,41 +23,45 @@ http:
       rule: "PathPrefix(`/api/v1/users/me/excluded-stores`)"
       service: store
       priority: 100
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
     stats:
       rule: "PathPrefix(`/api/v1/users/me/stats`)"
       service: analytics
       priority: 100
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
     product-prices:
       rule: "PathRegexp(`^/api/v1/products/[^/]+/prices`)"
       service: pricing
       priority: 100
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
     auth:
       rule: "PathPrefix(`/api/v1/auth`)"
       service: auth
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
     users:
       rule: "PathPrefix(`/api/v1/users`)"
       service: user
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
     stores:
       rule: "PathPrefix(`/api/v1/stores`)"
       service: store
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
     catalog:
       rule: "PathPrefix(`/api/v1/products`) || PathPrefix(`/api/v1/categories`)"
       service: catalog
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
     lists:
       rule: "PathPrefix(`/api/v1/lists`)"
       service: list
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
     comparisons:
       rule: "PathPrefix(`/api/v1/comparisons`)"
       service: pricing
-      middlewares: [rate-limit]
+      middlewares: [strip-service-headers, rate-limit]
+    notifications:
+      rule: "PathPrefix(`/api/v1/notifications`)"
+      service: notification
+      middlewares: [strip-service-headers, rate-limit]
     internal-blocked:
       rule: "PathPrefix(`/api/v1/internal`)"
       service: auth
@@ -66,3 +76,4 @@ http:
     list:      { loadBalancer: { servers: [{ url: "http://list:3000" }] } }
     pricing:   { loadBalancer: { servers: [{ url: "http://pricing:3000" }] } }
     analytics: { loadBalancer: { servers: [{ url: "http://analytics:3000" }] } }
+    notification: { loadBalancer: { servers: [{ url: "http://notification:3000" }] } }

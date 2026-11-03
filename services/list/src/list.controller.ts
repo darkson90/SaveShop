@@ -141,6 +141,7 @@ export class ListController {
     if (body?.productId) {
       const { items } = await callService<any>(serviceUrl.catalog(), '/internal/products/batch', {
         method: 'POST',
+        asService: true,
         body: { ids: [reqUuid(body.productId, 'productId')] },
       });
       if (!items[0]) throw new NotFoundException('Prodotto non trovato');
@@ -153,7 +154,9 @@ export class ListController {
       const parsed = parseInput(raw);
       quantity = optNumber(body.quantity, 'quantity', 0.001, 999) ?? parsed.quantity;
       unit = parsed.unit;
-      const match = await callService<any>(serviceUrl.catalog(), `/internal/products/match?q=${encodeURIComponent(parsed.text)}`);
+      const match = await callService<any>(serviceUrl.catalog(), `/internal/products/match?q=${encodeURIComponent(parsed.text)}`, {
+        asService: true,
+      });
       if (match.product && match.confidence >= MIN_MATCH_CONFIDENCE) {
         product = match.product;
         confidence = match.confidence;
@@ -178,7 +181,7 @@ export class ListController {
            ON CONFLICT (user_id, product_id) DO UPDATE SET times_added = user_product_frequency.times_added + 1, last_added = now()`,
           [user.userId, product.id, product.name],
         );
-        await addToOutbox(client, Events.ItemAdded, { userId: user.userId, listId: id, productId: product.id });
+        await addToOutbox(client, Events.ItemAdded, { userId: user.userId, listId: id, productId: product.id, productName: product.name });
       }
       return toItem(rows[0]);
     });
@@ -196,6 +199,7 @@ export class ListController {
       // Abbinamento manuale di una voce libera
       const { items } = await callService<any>(serviceUrl.catalog(), '/internal/products/batch', {
         method: 'POST',
+        asService: true,
         body: { ids: [reqUuid(body.productId, 'productId')] },
       });
       if (!items[0]) throw new NotFoundException('Prodotto non trovato');
