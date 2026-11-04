@@ -80,7 +80,15 @@ async function saveOffers(pool: Pool, userId: string, offers: Offer[], validFrom
   return fresh;
 }
 
+/** Al massimo una push ogni N ore per utente: un giro di raccolta prezzi arriva in più lotti. */
+const MIN_HOURS_BETWEEN_PUSHES = Number(process.env.NOTIFY_MIN_HOURS_BETWEEN_PUSHES ?? 12);
+
 async function push(pool: Pool, sender: PushSender, userId: string, offers: Offer[]): Promise<void> {
+  const recent = await pool.query(
+    'SELECT 1 FROM notifications WHERE user_id = $1 AND pushed_at > now() - make_interval(hours => $2) LIMIT 1',
+    [userId, MIN_HOURS_BETWEEN_PUSHES],
+  );
+  if (recent.rowCount) return; // le offerte nuove restano visibili in "Offerte per te"
   const { rows } = await pool.query('SELECT token FROM devices WHERE user_id = $1', [userId]);
   if (!rows.length) return; // le offerte restano comunque nella casella "Offerte per te"
   const result = await sender.send(rows.map((r) => r.token), { ...pushText(offers), data: { route: '/offerte' } });

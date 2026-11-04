@@ -31,7 +31,7 @@ spec:
               value: "/run/keys/jwt-private.pem"
           volumeMounts:
             - { name: jwt, mountPath: /run/keys, readOnly: true }
-          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
@@ -94,7 +94,7 @@ spec:
               valueFrom: { secretKeyRef: { name: spesa-internal, key: loyalty-key } }
           volumeMounts:
             - { name: jwt, mountPath: /run/keys, readOnly: true }
-          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
@@ -154,7 +154,7 @@ spec:
               valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
           volumeMounts:
             - { name: jwt, mountPath: /run/keys, readOnly: true }
-          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
@@ -214,7 +214,7 @@ spec:
               valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
           volumeMounts:
             - { name: jwt, mountPath: /run/keys, readOnly: true }
-          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
@@ -274,7 +274,7 @@ spec:
               valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
           volumeMounts:
             - { name: jwt, mountPath: /run/keys, readOnly: true }
-          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
@@ -336,7 +336,7 @@ spec:
               value: "redis://redis:6379/0"
           volumeMounts:
             - { name: jwt, mountPath: /run/keys, readOnly: true }
-          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
@@ -398,7 +398,7 @@ spec:
               value: "redis://redis:6379/1"
           volumeMounts:
             - { name: jwt, mountPath: /run/keys, readOnly: true }
-          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 100m, memory: 128Mi }
@@ -461,7 +461,7 @@ spec:
           volumeMounts:
             - { name: jwt, mountPath: /run/keys, readOnly: true }
             - { name: fcm, mountPath: /run/secrets/fcm, readOnly: true }
-          readinessProbe: { httpGet: { path: /health, port: http }, periodSeconds: 5 }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
           livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
           resources:
             requests: { cpu: 100m, memory: 128Mi }

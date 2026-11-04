@@ -17,17 +17,57 @@
       "ean": "8099999000024",
       "name": "Formaggio Piave DOP 250 g",
       "brand": "Latteria Esempio",
-      "categories": ["en:dairies", "en:cheeses"],
+      "categories": [
+        "en:dairies",
+        "en:cheeses"
+      ],
       "quantity": 250,
       "quantityUnit": "g"
     }
   ],
   "prices": [
-    { "store": "vodo-01", "ean": "8000000000101", "price": 1.35, "promoPrice": 0.99, "promoUntil": "2099-12-31" },
-    { "store": "vodo-01", "ean": "8099999000024", "price": 4.2 },
-    { "store": "vodo-01", "ean": "8000000000107", "price": 2.3, "promoPrice": 1.9, "promoUntil": "2020-01-01" },
-    { "store": "vodo-01", "ean": "8000000000126", "price": 2.6, "promoPrice": 2.2, "loyaltyOnly": true },
-    { "store": "altro", "ean": "8000000000120", "price": 0.9 },
-    { "store": "vodo-01", "ean": "ABC", "price": 1.0 }
+    {
+      "store": "vodo-01",
+      "ean": "8000000000101",
+      "price": 1.35,
+      "promoPrice": 0.99,
+      "promoUntil": "2099-12-31"
+    },
+    {
+      "store": "vodo-01",
+      "ean": "8099999000024",
+      "price": 4.2
+    },
+    {
+      "store": "vodo-01",
+      "ean": "8000000000107",
+      "price": 2.3,
+      "promoPrice": 1.9,
+      "promoUntil": "2020-01-01"
+    },
+    {
+      "store": "vodo-01",
+      "ean": "8000000000126",
+      "price": 2.6,
+      "promoPrice": 2.2,
+      "loyaltyOnly": true
+    },
+    {
+      "store": "altro",
+      "ean": "8000000000120",
+      "price": 0.9
+    },
+    {
+      "store": "vodo-01",
+      "ean": "ABC",
+      "price": 1.0
+    },
+    {
+      "store": "vodo-01",
+      "ean": "8000000000101",
+      "price": 1.35,
+      "promoPrice": 0.99,
+      "promoUntil": "2099-12-31"
+    }
   ]
 }

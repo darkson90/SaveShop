@@ -19,6 +19,7 @@ bootstrap(
   {
     name: 'list',
     publishes: true,
+    maintenance: ["DELETE FROM list_invites WHERE expires_at < now() - interval '7 days'"],
     onReady: async (app, { pool, bus }) => {
       await attachLiveUpdates(app.getHttpServer(), pool, bus);
       // Link d'invito pubblici (fuori da /api/v1): pagina di atterraggio e file per App/Universal Links.

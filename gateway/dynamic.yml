@@ -8,11 +8,33 @@ http:
         customRequestHeaders:
           X-Service-Token: ""
           X-Acting-User: ""
+    # Limite per utente (chiave: header Authorization) sulle API autenticate. Prima era 60 richieste
+    # al minuto per IP: l'autocompletamento mentre si scrive la lista lo superava, e con il CGNAT
+    # degli operatori mobili tanti utenti condividono lo stesso IP.
     rate-limit:
       rateLimit:
-        average: 60      # richieste al minuto per IP (in produzione: per utente, via header)
+        average: 300
+        period: 1m
+        burst: 100
+        sourceCriterion:
+          requestHeaderName: Authorization
+    # Login e registrazione: limite stretto per IP contro i tentativi a forza bruta.
+    # In Kubernetes deploy.sh aggiunge ipStrategy.depth=1 (IP reale dall'ingress, X-Forwarded-For).
+    rate-limit-auth:
+      rateLimit:
+        average: 20
+        period: 1m
+        burst: 10
+        sourceCriterion:
+          ipStrategy: { depth: 0 }
+    # Pagine pubbliche dei link d'invito.
+    rate-limit-public:
+      rateLimit:
+        average: 120
         period: 1m
         burst: 30
+        sourceCriterion:
+          ipStrategy: { depth: 0 }
     block-internal:
       replacePathRegex:
         regex: "^/api/v1/internal/.*"
@@ -37,7 +59,7 @@ http:
     auth:
       rule: "PathPrefix(`/api/v1/auth`)"
       service: auth
-      middlewares: [strip-service-headers, rate-limit]
+      middlewares: [strip-service-headers, rate-limit-auth]
     users:
       rule: "PathPrefix(`/api/v1/users`)"
       service: user
@@ -65,7 +87,7 @@ http:
     invite-links:
       rule: "PathPrefix(`/i/`) || PathPrefix(`/.well-known/assetlinks.json`) || PathPrefix(`/.well-known/apple-app-site-association`)"
       service: list
-      middlewares: [strip-service-headers, rate-limit]
+      middlewares: [strip-service-headers, rate-limit-public]
     internal-blocked:
       rule: "PathPrefix(`/api/v1/internal`)"
       service: auth

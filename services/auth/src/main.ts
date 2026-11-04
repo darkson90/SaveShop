@@ -11,6 +11,7 @@ bootstrap(
   {
     name: 'auth',
     publishes: true,
+    maintenance: ["DELETE FROM refresh_tokens WHERE expires_at < now() OR revoked_at < now() - interval '30 days'"],
     onReady: async (_app, { pool, bus }) => {
       // Cancellazione account (GDPR): le credenziali seguono la cancellazione del profilo.
       await bus.subscribe('auth.user-deleted', [Events.UserDeleted], (event) =>

@@ -203,12 +203,19 @@ export class ListController {
       // Lock sulla lista: due membri che aggiungono insieme non ottengono la stessa posizione.
       await client.query('SELECT 1 FROM shopping_lists WHERE id = $1 FOR UPDATE', [id]);
       const pos = await client.query('SELECT COALESCE(MAX(position), 0) + 1 AS next FROM list_items WHERE list_id = $1', [id]);
+      // ON CONFLICT: due invii simultanei con la stessa Idempotency-Key (es. coda offline + tocco
+      // dell'utente) producono un solo articolo; il secondo riceve quello già creato.
       const { rows } = await client.query(
         `INSERT INTO list_items (id, list_id, product_id, product_name, category, raw_text, quantity, unit, match_confidence, position, idempotency_key, added_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         ON CONFLICT (list_id, idempotency_key) DO NOTHING RETURNING *`,
         [uuidv7(), id, product?.id ?? null, product?.name ?? null, product?.category ?? null, raw, quantity,
           product?.unit ?? unit ?? 'pz', confidence, pos.rows[0].next, idemKey ?? null, user.userId],
       );
+      if (!rows[0]) {
+        const existing = await client.query('SELECT * FROM list_items WHERE list_id = $1 AND idempotency_key = $2', [id, idemKey]);
+        return { ...toItem(existing.rows[0]), duplicate: true };
+      }
       await client.query('UPDATE shopping_lists SET updated_at = now() WHERE id = $1', [id]);
       if (product) {
         await client.query(
@@ -221,6 +228,10 @@ export class ListController {
       }
       return toItem(rows[0]);
     });
+    if ('duplicate' in item) {
+      const { duplicate: _duplicate, ...existing } = item;
+      return existing;
+    }
     await notifyChange(this.bus, id, 'item.added', user.userId, { itemId: item.id });
     return item;
   }
@@ -310,7 +321,12 @@ export class ListController {
     const purchaseId = uuidv7();
     const purchasedAt = new Date().toISOString();
     await withTx(this.pool, async (client) => {
-      await client.query("UPDATE shopping_lists SET status = 'purchased', updated_at = now() WHERE id = $1", [id]);
+      // Solo se ancora aperta: due membri che chiudono insieme non registrano la spesa due volte.
+      const closed = await client.query(
+        "UPDATE shopping_lists SET status = 'purchased', updated_at = now() WHERE id = $1 AND status = 'open'",
+        [id],
+      );
+      if (!closed.rowCount) throw new ConflictException('La spesa di questa lista è già stata registrata');
       await addToOutbox(client, Events.PurchaseCompleted, {
         purchaseId,
         userId: user.userId,

@@ -20,6 +20,18 @@ const ACCESS_TTL_SECONDS = 15 * 60;
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Il refresh token è "<id>.<segreto>": un formato diverso è semplicemente non valido (401, non 500). */
+function splitRefreshToken(token: string): [string, string] {
+  const [id, secret] = token.split('.');
+  if (!UUID_RE.test(id ?? '') || !secret) throw new UnauthorizedException('Refresh token non valido');
+  return [id, secret];
+}
+
+// Hash di riferimento: il login di un'email inesistente impiega lo stesso tempo di uno reale,
+// così i tempi di risposta non rivelano quali email sono registrate.
+const DUMMY_HASH = hash('password-di-riferimento-mai-usata');
 
 @Controller('auth')
 export class AuthController {
@@ -56,8 +68,8 @@ export class AuthController {
     const email = reqString(body, 'email', 254).toLowerCase();
     const password = reqString(body, 'password', 200);
     const { rows } = await this.pool.query('SELECT user_id, password_hash FROM credentials WHERE email = $1', [email]);
-    const ok = rows[0] && (await verify(rows[0].password_hash, password));
-    if (!ok) throw new UnauthorizedException('Credenziali non valide');
+    const ok = await verify(rows[0]?.password_hash ?? (await DUMMY_HASH), password);
+    if (!ok || !rows[0]) throw new UnauthorizedException('Credenziali non valide');
     return withTx(this.pool, (client) => this.issueTokens(client, rows[0].user_id, email));
   }
 
@@ -66,26 +78,40 @@ export class AuthController {
   @Post('refresh')
   @HttpCode(200)
   async refresh(@Body() body: any) {
-    const [id, secret] = reqString(body, 'refreshToken', 200).split('.');
-    return withTx(this.pool, async (client) => {
+    const [id, secret] = splitRefreshToken(reqString(body, 'refreshToken', 200));
+    const result = await withTx(this.pool, async (client) => {
       const { rows } = await client.query(
         `UPDATE refresh_tokens SET revoked_at = now()
          WHERE id = $1 AND token_hash = $2 AND revoked_at IS NULL AND expires_at > now()
          RETURNING user_id`,
-        [id, sha256(secret ?? '')],
+        [id, sha256(secret)],
       );
-      if (!rows[0]) throw new UnauthorizedException('Refresh token non valido');
-      const user = await client.query('SELECT email FROM credentials WHERE user_id = $1', [rows[0].user_id]);
-      return this.issueTokens(client, rows[0].user_id, user.rows[0].email);
+      if (rows[0]) {
+        const user = await client.query('SELECT email FROM credentials WHERE user_id = $1', [rows[0].user_id]);
+        return this.issueTokens(client, rows[0].user_id, user.rows[0].email);
+      }
+      // Un token già ruotato che viene riusato (oltre 60 s di tolleranza per i tentativi ripetuti
+      // dell'app) indica un probabile furto: si chiudono tutte le sessioni di quell'utente.
+      await client.query(
+        `UPDATE refresh_tokens SET revoked_at = now()
+         WHERE revoked_at IS NULL AND user_id = (
+           SELECT user_id FROM refresh_tokens
+           WHERE id = $1 AND token_hash = $2 AND revoked_at < now() - interval '60 seconds')`,
+        [id, sha256(secret)],
+      );
+      return null;
     });
+    if (!result) throw new UnauthorizedException('Refresh token non valido');
+    return result;
   }
 
   @Public()
   @Post('logout')
   @HttpCode(204)
   async logout(@Body() body: any) {
-    const [id] = reqString(body, 'refreshToken', 200).split('.');
-    await this.pool.query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1', [id]);
+    // Revoca solo con il token completo: conoscere l'id non basta a chiudere la sessione altrui.
+    const [id, secret] = splitRefreshToken(reqString(body, 'refreshToken', 200));
+    await this.pool.query('UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1 AND token_hash = $2', [id, sha256(secret)]);
   }
 
   private async issueTokens(client: PoolClient, userId: string, email: string) {

@@ -52,6 +52,9 @@ jobs:
           npm ci || npm install
           npm run build
 
+      - name: Dipendenze senza vulnerabilità gravi
+        run: npm audit --omit=dev --audit-level=high
+
       - name: Unit test
         run: |
           npm test
@@ -62,7 +65,7 @@ jobs:
           ./scripts/gen-keys.sh
           ./scripts/dev-local.sh
           for port in 3001 3002 3003 3004 3005 3006 3007 3008; do
-            timeout 60 bash -c "until curl -sf localhost:$port/health >/dev/null; do sleep 1; done"
+            timeout 60 bash -c "until curl -sf localhost:$port/ready >/dev/null; do sleep 1; done"
           done
 
       - name: Test end-to-end (con ingestion e notifiche)

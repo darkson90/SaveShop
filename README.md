@@ -167,6 +167,28 @@ prezzi completi, con il consenso di chi li pubblica.
 - Senza rete ogni modifica della lista (aggiunta, quantità, spunta, rimozione) resta valida sul
   telefono e va in una coda locale, compattata e inviata in ordine al ritorno della connessione.
 
+## Affidabilità e prestazioni
+
+- **Eventi**: l'outbox considera un evento pubblicato solo dopo la conferma di RabbitMQ; un messaggio
+  che fallisce due volte finisce nella coda `spesa.dead` invece di andare perso. Se la connessione al
+  broker cade, il servizio esce e viene riavviato da Docker o Kubernetes.
+- **Avvio di più repliche**: le migrazioni del database sono protette da un lock, così due pod che
+  partono insieme non si ostacolano. `/health` dice se il processo è vivo, `/ready` se database e bus
+  rispondono (usato da Kubernetes, Docker Compose e CI).
+- **Cache**: i confronti in cache dipendono anche da negozi ammessi, carte fedeltà e versione dei
+  listini, quindi escludere un negozio cambia subito il risultato. L'invalidazione avviene cambiando
+  versione, senza scansioni `KEYS` su Redis.
+- **Prezzi vecchi**: un prezzo che nessuna fonte conferma da `PRICE_MAX_AGE_DAYS` giorni (default 60)
+  non entra più nei confronti; per Open Prices conta la data dello scontrino o del cartellino.
+- **Metriche**: la spesa per categoria è aggiornata riga per riga a ogni acquisto, invece di ricalcolare
+  ogni volta una vista su tutto lo storico.
+- **Ricerca prodotti**: usa gli indici trigram anche con un catalogo grande; gli scontrini vengono
+  abbinati con una sola chiamata al catalogo.
+- **Limiti del gateway**: 300 richieste al minuto per utente sulle API, 20 al minuto per IP su login e
+  registrazione, 120 al minuto per IP sulle pagine d'invito.
+- **Pulizia automatica** ogni ora: eventi già pubblicati, token scaduti, inviti scaduti, storico prezzi
+  oltre 180 giorni, notifiche oltre 60 giorni.
+
 ## Endpoint aggiuntivi rispetto alle specifiche
 
 - `GET /lists/frequent-products`: alimenta i chip "Compri spesso".
@@ -198,13 +220,17 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
 
 ## Stato della verifica
 
-- Backend: compilato e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e Redis; 31 unit test
-  Node, 10 test Python dell'Ingestion e
+- Backend: NestJS 12, nessuna vulnerabilità nota nelle dipendenze (`npm audit`, controllato anche in CI).
+  Compilato con controlli TypeScript stretti e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e
+  Redis; 31 unit test Node, 10 test Python dell'Ingestion e
   il test end-to-end passano. Il percorso: registrazione → lista → blacklist → confronto → spesa →
   metriche → offerte notificate senza doppioni → endpoint interni protetti → lista condivisa con un
   secondo utente e aggiornamento via WebSocket → chiusura con lo scontrino → uscita del membro →
   prezzi Open Prices (con un server che simula l'API) → feed partner → cancellazione account.
-  Il test copre anche link d'invito, pagina di atterraggio e file `.well-known`.
+  Il test copre anche link d'invito, pagina di atterraggio e file `.well-known`, più i casi limite
+  corretti nella revisione: token malformati, logout con segreto sbagliato, invii simultanei con la
+  stessa chiave, chiusura contemporanea della spesa da due membri, negozio escluso dopo un confronto
+  già in cache, righe ripetute in un feed.
 - La CI su GitHub esegue tutto questo a ogni push, più analisi e test dell'app Flutter (modelli,
   coda offline, schermate di login e profilo) e la build delle immagini Docker.
 - Ancora da provare su un ambiente reale: il gateway Traefik con Docker Compose, i manifest Kubernetes

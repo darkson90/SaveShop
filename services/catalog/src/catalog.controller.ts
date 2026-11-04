@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
 import { addToOutbox, Events, optNumber, PG_POOL, reqString, reqUuid, ServiceOnly, uuidv7, withTx } from '@spesa/common';
 import { mapCategory, packageSize } from './categories';
 import { Pool } from 'pg';
@@ -6,6 +6,8 @@ import { Pool } from 'pg';
 /**
  * Ricerca per autocompletamento: prefisso e sottostringa sul nome o su un sinonimo,
  * più somiglianza trigram (pg_trgm) per tollerare errori di battitura.
+ * Il WHERE di ogni ramo usa gli indici trigram (LIKE '%…%', "<%" e "%"): con un catalogo che cresce
+ * grazie alle fonti esterne non si calcola più la somiglianza su tutti i prodotti.
  */
 const SEARCH_SQL = `
   WITH q AS (SELECT lower($1::text) AS t, replace(replace(replace(lower($1::text), '\\', '\\\\'), '%', '\\%'), '_', '\\_') AS esc),
@@ -15,12 +17,14 @@ const SEARCH_SQL = `
                     CASE WHEN lower(p.name) LIKE q.esc || '%' THEN 1.0
                          WHEN lower(p.name) LIKE '%' || q.esc || '%' THEN 0.8 ELSE 0 END) AS score
     FROM products p, q
+    WHERE lower(p.name) LIKE '%' || q.esc || '%' OR q.t <% lower(p.name)
     UNION ALL
     SELECT a.product_id,
            GREATEST(similarity(q.t, a.alias),
                     CASE WHEN a.alias = q.t THEN 1.0
                          WHEN a.alias LIKE q.esc || '%' THEN 0.9 ELSE 0 END)
     FROM product_aliases a, q
+    WHERE a.alias LIKE q.esc || '%' OR a.alias % q.t
   )
   SELECT p.id, p.name, p.brand, p.unit, p.size, p.category_id, c.name AS category_name, MAX(cand.score) AS score
   FROM cand
@@ -31,9 +35,18 @@ const SEARCH_SQL = `
   ORDER BY score DESC, p.popularity DESC
   LIMIT $2`;
 
+/** Soglia minima per gli operatori trigram, allineata al filtro finale (0,3). */
+const THRESHOLDS = `SELECT set_config('pg_trgm.word_similarity_threshold', '0.3', true),
+                           set_config('pg_trgm.similarity_threshold', '0.3', true)`;
+
 const DETAIL_SQL = `
   SELECT p.id, p.name, p.brand, p.ean, p.unit, p.size, p.category_id, c.name AS category_name
   FROM products p JOIN categories c ON c.id = p.category_id`;
+
+function toMatch(row: any) {
+  if (!row) return { product: null, confidence: 0 };
+  return { product: toProduct(row), confidence: Math.round(Number(row.score) * 100) / 100 };
+}
 
 function toProduct(r: any) {
   return {
@@ -51,12 +64,30 @@ function toProduct(r: any) {
 export class CatalogController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
+  /** Esegue più ricerche in una transazione, con le soglie trigram impostate solo per questa. */
+  private async search(terms: string[], limit: number): Promise<any[][]> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(THRESHOLDS);
+      const results: any[][] = [];
+      for (const term of terms) results.push((await client.query(SEARCH_SQL, [term, limit])).rows);
+      await client.query('COMMIT');
+      return results;
+    } catch (err) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
   @Get('products/suggest')
   async suggest(@Query('q') q: string, @Query('limit') limit?: string) {
     const term = (q ?? '').trim();
     if (term.length < 2) return { items: [] };
     if (term.length > 60) throw new BadRequestException('Ricerca troppo lunga');
-    const { rows } = await this.pool.query(SEARCH_SQL, [term, optNumber(limit, 'limit', 1, 20) ?? 8]);
+    const [rows] = await this.search([term], optNumber(limit, 'limit', 1, 20) ?? 8);
     return { items: rows.map(toProduct) };
   }
 
@@ -85,9 +116,20 @@ export class CatalogController {
   @ServiceOnly()
   @Get('internal/products/match')
   async match(@Query('q') q: string) {
-    const { rows } = await this.pool.query(SEARCH_SQL, [reqString({ q }, 'q', 120), 1]);
-    if (!rows[0]) return { product: null, confidence: 0 };
-    return { product: toProduct(rows[0]), confidence: Math.round(Number(rows[0].score) * 100) / 100 };
+    const [rows] = await this.search([reqString({ q }, 'q', 120)], 1);
+    return toMatch(rows[0]);
+  }
+
+  /** Interno (scontrini): abbina fino a 150 testi in una sola chiamata invece di una per riga. */
+  @ServiceOnly()
+  @Post('internal/products/match-batch')
+  @HttpCode(200)
+  async matchBatch(@Body() body: any) {
+    const terms: string[] = (Array.isArray(body?.q) ? body.q.slice(0, 150) : []).map((t: any) =>
+      String(t ?? '').trim().slice(0, 120),
+    );
+    const results = await this.search(terms.map((t) => t || '-'), 1);
+    return { items: results.map((rows, i) => (terms[i] ? toMatch(rows[0]) : toMatch(undefined))) };
   }
 
   /** Interno: dettagli di più prodotti in una chiamata (List, Pricing). */

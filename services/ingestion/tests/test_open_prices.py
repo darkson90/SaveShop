@@ -43,6 +43,7 @@ class ToRawPriceTest(unittest.TestCase):
         self.assertEqual(p.store.name, "Kanguro Supermercati")
         self.assertEqual(p.store.address, "Castion, 32024")
         self.assertEqual(p.product.quantity_unit, "g")
+        self.assertEqual(p.observed_on, "2026-10-19")
 
     def test_prezzo_scontato(self):
         p = to_raw_price(item(price=1.99, price_is_discounted=True, price_without_discount=2.49))

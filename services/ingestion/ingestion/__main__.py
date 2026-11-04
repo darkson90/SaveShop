@@ -35,7 +35,7 @@ def build_sources() -> list[Source]:
                 lat=float(os.environ.get("OPEN_PRICES_LAT", "46.14")),    # Belluno e dintorni
                 lon=float(os.environ.get("OPEN_PRICES_LON", "12.22")),
                 radius_km=float(os.environ.get("OPEN_PRICES_RADIUS_KM", "40")),
-                days=int(os.environ.get("OPEN_PRICES_DAYS", "90")),
+                days=int(os.environ.get("OPEN_PRICES_DAYS", "60")),
             ))
         elif name == "feeds":
             # URL o percorsi dei feed dei negozi partner, separati da virgola (docs/feed-format.md).
@@ -113,6 +113,7 @@ def normalize(raw: list[RawPrice], products: dict[str, str], stores: dict[str, s
             "price": round(r.price, 2),
             "promoPrice": round(r.promo_price, 2) if r.promo_price else None,
             "loyaltyOnly": r.loyalty_only,
+            "observedOn": r.observed_on,
         })
     return rows, skipped
 

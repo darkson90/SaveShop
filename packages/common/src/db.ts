@@ -27,19 +27,56 @@ CREATE TABLE IF NOT EXISTS processed_events (
 );
 `;
 
-/** Applica in ordine i file .sql della cartella migrations non ancora eseguiti. */
+/**
+ * Applica in ordine i file .sql della cartella migrations non ancora eseguiti.
+ * Un lock consultivo serializza le repliche che partono insieme (es. 2 pod in Kubernetes):
+ * la seconda aspetta la prima e poi trova le migrazioni già applicate.
+ */
 export async function runMigrations(pool: Pool, dir: string): Promise<void> {
-  await pool.query(COMMON_SQL);
-  const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
-  for (const file of files) {
-    const done = await pool.query('SELECT 1 FROM schema_migrations WHERE name = $1', [file]);
-    if (done.rowCount) continue;
-    await withTx(pool, async (client) => {
-      await client.query(readFileSync(join(dir, file), 'utf8'));
-      await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
-    });
-    console.log(`[db] migrazione applicata: ${file}`);
+  const client = await pool.connect();
+  try {
+    await client.query("SELECT pg_advisory_lock(hashtext('spesa:migrations'))");
+    await client.query(COMMON_SQL);
+    const files = readdirSync(dir).filter((f) => f.endsWith('.sql')).sort();
+    for (const file of files) {
+      const done = await client.query('SELECT 1 FROM schema_migrations WHERE name = $1', [file]);
+      if (done.rowCount) continue;
+      try {
+        await client.query('BEGIN');
+        await client.query(readFileSync(join(dir, file), 'utf8'));
+        await client.query('INSERT INTO schema_migrations (name) VALUES ($1)', [file]);
+        await client.query('COMMIT');
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      }
+      console.log(`[db] migrazione applicata: ${file}`);
+    }
+  } finally {
+    await client.query("SELECT pg_advisory_unlock(hashtext('spesa:migrations'))").catch(() => undefined);
+    client.release();
   }
+}
+
+/**
+ * Pulizia periodica (ogni ora): eventi già pubblicati dall'outbox dopo 7 giorni, registro dei
+ * consumer dopo 30 giorni (oltre la finestra di riconsegna di RabbitMQ), più le query del servizio.
+ */
+export function startMaintenance(pool: Pool, extra: string[] = [], intervalMs = 60 * 60 * 1000): NodeJS.Timeout {
+  const statements = [
+    "DELETE FROM outbox WHERE published_at < now() - interval '7 days'",
+    "DELETE FROM processed_events WHERE processed_at < now() - interval '30 days'",
+    ...extra,
+  ];
+  const run = async () => {
+    for (const sql of statements) {
+      await pool.query(sql).catch((err) => console.error(`[db] pulizia fallita (${sql.slice(0, 40)}…):`, err.message));
+    }
+  };
+  setTimeout(run, 60_000).unref(); // primo giro un minuto dopo l'avvio
+  const timer = setInterval(run, intervalMs);
+  timer.unref();
+  return timer;
 }
 
 export async function withTx<T>(pool: Pool, fn: (client: PoolClient) => Promise<T>): Promise<T> {

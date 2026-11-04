@@ -4,6 +4,7 @@ import type Redis from 'ioredis';
 import { Pool } from 'pg';
 
 export const REDIS = 'REDIS';
+export const statsVersionKey = (userId: string) => `stats:${userId}:version`;
 const CACHE_TTL_SECONDS = 10 * 60;
 const MAX_SLICES = 6;
 
@@ -34,9 +35,11 @@ export class AnalyticsController {
   @Get()
   async stats(@CurrentUser() user: AuthUser, @Query('period') periodParam?: string) {
     const period = periodOf(periodParam);
-    return this.cached(`stats:${user.userId}:summary:${period}`, async () => {
+    return this.cached(user.userId, `summary:${period}`, async () => {
       const start = PERIOD_START[period];
-      const totals = await this.pool.query(
+      // Le tre letture sono indipendenti: in parallelo invece che una dopo l'altra.
+      const [totals, top, categories] = await Promise.all([
+        this.pool.query(
         `SELECT count(*)::int AS purchases,
                 COALESCE(SUM(total_reference - comparable_paid), 0) AS total_saved,
                 -- media per spesa di (R - P) / R, solo sulle spese confrontabili
@@ -44,8 +47,8 @@ export class AnalyticsController {
                 COALESCE(SUM(total_paid), 0) AS total_spent
          FROM purchases WHERE user_id = $1 AND purchased_at >= ${start}`,
         [user.userId],
-      );
-      const top = await this.pool.query(
+        ),
+        this.pool.query(
         `SELECT l.product_id, COALESCE(r.name, 'Prodotto') AS name, count(*)::int AS times, SUM(l.quantity) AS qty
          FROM purchases p JOIN purchase_lines l ON l.purchase_id = p.id
          LEFT JOIN products_ref r ON r.product_id = l.product_id
@@ -54,7 +57,9 @@ export class AnalyticsController {
          ORDER BY times DESC, qty DESC, name
          LIMIT 3`,
         [user.userId],
-      );
+        ),
+        this.categoryRows(user.userId, period),
+      ]);
       const t = totals.rows[0];
       return {
         period,
@@ -63,7 +68,7 @@ export class AnalyticsController {
         totalSpentEur: round2(Number(t.total_spent)),
         purchases: t.purchases,
         topProducts: top.rows.map((r) => ({ productId: r.product_id, name: r.name, times: r.times })),
-        categories: (await this.categoryRows(user.userId, period)).categories,
+        categories: categories.categories,
       };
     });
   }
@@ -72,23 +77,24 @@ export class AnalyticsController {
   @Get('categories')
   async categories(@CurrentUser() user: AuthUser, @Query('period') periodParam?: string) {
     const period = periodOf(periodParam);
-    return this.cached(`stats:${user.userId}:categories:${period}`, () => this.categoryRows(user.userId, period));
+    return this.cached(user.userId, `categories:${period}`, () => this.categoryRows(user.userId, period));
   }
 
   private async categoryRows(userId: string, period: string) {
     const { rows } = await this.pool.query(
-      `SELECT COALESCE(c.category_name, 'Altro') AS category, SUM(s.spent_eur) AS spent
-       FROM user_category_spend s
-       LEFT JOIN (SELECT DISTINCT category_id, category_name FROM products_ref) c ON c.category_id = s.category_id
-       WHERE s.user_id = $1 AND s.month >= date_trunc('month', ${PERIOD_START[period]})
+      `SELECT category_name AS category, SUM(spent_eur) AS spent
+       FROM user_category_spend
+       WHERE user_id = $1 AND month >= date_trunc('month', ${PERIOD_START[period]})
        GROUP BY 1 ORDER BY spent DESC`,
       [userId],
     );
     const total = rows.reduce((s, r) => s + Number(r.spent), 0);
-    const head = rows.slice(0, MAX_SLICES);
-    const restTotal = rows.slice(MAX_SLICES).reduce((s, r) => s + Number(r.spent), 0);
-    const slices = head.map((r) => ({ category: r.category, spent: Number(r.spent) }));
-    if (restTotal > 0) slices.push({ category: 'Altro', spent: restTotal });
+    // Le categorie oltre la sesta confluiscono in "Altro", insieme a un'eventuale "Altro" già presente.
+    const named = rows.filter((r) => r.category !== 'Altro');
+    const head = named.slice(0, MAX_SLICES);
+    const otherTotal = total - head.reduce((s, r) => s + Number(r.spent), 0);
+    const slices = head.map((r) => ({ category: r.category as string, spent: Number(r.spent) }));
+    if (otherTotal > 0.004) slices.push({ category: 'Altro', spent: otherTotal });
     return {
       period,
       totalEur: round2(total),
@@ -100,7 +106,10 @@ export class AnalyticsController {
     };
   }
 
-  private async cached<T>(key: string, compute: () => Promise<T>): Promise<T> {
+  /** Cache per utente con versione: una nuova spesa incrementa la versione e invalida tutto in O(1). */
+  private async cached<T>(userId: string, name: string, compute: () => Promise<T>): Promise<T> {
+    const version = (await this.redis.get(statsVersionKey(userId)).catch(() => null)) ?? '0';
+    const key = `stats:${userId}:${version}:${name}`;
     const hit = await this.redis.get(key).catch(() => null);
     if (hit) return JSON.parse(hit);
     const value = await compute();

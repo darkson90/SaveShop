@@ -15,7 +15,8 @@ class ParseFeedTest(unittest.TestCase):
 
     def test_righe_valide_e_scartate(self):
         prices, warnings = parse_feed(self.data, today=dt.date(2026, 11, 3))
-        self.assertEqual([p.ean for p in prices], ["8000000000101", "8099999000024", "8000000000107", "8000000000126"])
+        # L'ultima riga ripete il latte: il feed la importa, il Pricing tiene l'ultima per coppia.
+        self.assertEqual([p.ean for p in prices], ["8000000000101", "8099999000024", "8000000000107", "8000000000126", "8000000000101"])
         self.assertEqual(len(warnings), 2)  # negozio sconosciuto, EAN non valido
         self.assertTrue(all(p.store_ref == "feed:alimentari-rossi:vodo-01" for p in prices))
 
@@ -45,7 +46,7 @@ class FeedSourceTest(unittest.TestCase):
             return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
         prices = FeedSource(["rotto", str(FIXTURE)], load=load).fetch()
-        self.assertEqual(len(prices), 4)
+        self.assertEqual(len(prices), 5)
 
 
 if __name__ == "__main__":

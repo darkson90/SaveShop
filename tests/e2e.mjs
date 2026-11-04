@@ -43,7 +43,13 @@ step('registrazione e profilo');
 const refreshed = await api('auth', '/auth/refresh', { method: 'POST', body: { refreshToken: reg.refreshToken } });
 assert.ok(refreshed.accessToken);
 await api('auth', '/auth/refresh', { method: 'POST', body: { refreshToken: reg.refreshToken }, expect: [401] });
-step('rotazione refresh token');
+// Regressioni: un token malformato era un errore 500; il logout con il solo id chiudeva la sessione.
+await api('auth', '/auth/refresh', { method: 'POST', body: { refreshToken: 'non-un-token' }, expect: [401] });
+await api('auth', '/auth/logout', { method: 'POST', body: { refreshToken: `${refreshed.refreshToken.split('.')[0]}.segreto-sbagliato` } });
+const stillValid = await api('auth', '/auth/refresh', { method: 'POST', body: { refreshToken: refreshed.refreshToken } });
+assert.ok(stillValid.accessToken, 'il logout con un segreto sbagliato non revoca la sessione');
+await api('list', '/lists/non-un-uuid', { expect: [400] });
+step('rotazione refresh token, token malformati e logout sicuro');
 
 // 2. Autocompletamento
 const sug = await api('catalog', '/products/suggest?q=mozz');
@@ -58,6 +64,10 @@ assert.equal(latte.quantity, 2);
 assert.equal(latte.product.name, 'Latte parz. scremato 1 l');
 const again = await add('2 latte', 'k-latte');
 assert.equal(again.id, latte.id, 'idempotenza');
+// Regressione: due invii simultanei con la stessa chiave davano un errore 500 e due tentativi.
+const [c1, c2] = await Promise.all([add('3 tonno', 'k-concorrente'), add('3 tonno', 'k-concorrente')]);
+assert.equal(c1.id, c2.id, 'invii simultanei: un solo articolo');
+await api('list', `/lists/${list.id}/items/${c1.id}`, { method: 'DELETE' });
 const spaghetti = await add('spaghetti 500 g');
 assert.equal(spaghetti.quantity, 1);
 const banane = await add('banane 1,5 kg');
@@ -86,6 +96,14 @@ step(`blacklist: escluso "${cortina.name}"`);
 
 // 5. Confronto prezzi nelle tre modalità
 const geo = { lat: HOME.lat, lng: HOME.lng, radiusKm: 25 };
+// Regressione cache: confronto, poi esclusione di un negozio, poi stesso confronto. Prima tornava
+// per 15 minuti il risultato in cache con il negozio appena escluso.
+const before = await api('pricing', '/comparisons', { method: 'POST', body: { listId: list.id, mode: 'single_store', ...geo } });
+const victim = before.results.at(-1);
+const tmpExcl = await api('store', '/users/me/excluded-stores', { method: 'POST', body: { storeId: victim.storeId } });
+const afterExcl = await api('pricing', '/comparisons', { method: 'POST', body: { listId: list.id, mode: 'single_store', ...geo } });
+assert.ok(!afterExcl.results.some((r) => r.storeId === victim.storeId), 'il negozio appena escluso sparisce subito');
+await api('store', `/users/me/excluded-stores/${tmpExcl.id}`, { method: 'DELETE' });
 const single = await api('pricing', '/comparisons', { method: 'POST', body: { listId: list.id, mode: 'single_store', ...geo } });
 assert.ok(single.results.length >= 1);
 assert.ok(!single.results.some((r) => r.storeId === cortina.id), 'il negozio escluso non compare');
@@ -228,7 +246,14 @@ assert.ok(read.lines.every((l) => l.match), 'tutte le righe abbinate');
 assert.equal(read.unmatchedItems.length, 0);
 const target = (await api('pricing', '/comparisons', { method: 'POST', body: { listId: shared.id, mode: 'single_store', ...geo } })).results[0];
 const paidPrices = read.lines.map((l) => ({ itemId: l.match.itemId, unitPaid: l.unitPrice }));
-const closed = await api('list', `/lists/${shared.id}/purchase`, { method: 'POST', body: { storeId: target.storeId, ...geo, paidPrices }, as: tokenB });
+// Due membri chiudono la spesa nello stesso momento: deve essere registrata una volta sola.
+const closeBody = { method: 'POST', body: { storeId: target.storeId, ...geo, paidPrices }, expect: [200, 201, 409] };
+const [r1, r2] = await Promise.all([
+  api('list', `/lists/${shared.id}/purchase`, { ...closeBody, as: tokenB }),
+  api('list', `/lists/${shared.id}/purchase`, closeBody),
+]);
+const closed = r1?.purchaseId ? r1 : r2;
+assert.ok(!(r1?.purchaseId && r2?.purchaseId), 'una sola chiusura riesce');
 assert.equal(closed.pricesFromReceipt, 4);
 assert.equal(closed.totalPaid, 5.81);
 await eventually(() => assert.ok(received.some((m) => m.op === 'list.purchased')));

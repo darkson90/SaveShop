@@ -33,6 +33,7 @@ class RawPrice:
     loyalty_only: bool = False
     store: StoreInfo | None = None      # presenti solo per le fonti che possono creare negozi/prodotti
     product: ProductInfo | None = None
+    observed_on: str | None = None      # YYYY-MM-DD dell'osservazione; None = oggi (listini e feed)
 
 
 class Source(Protocol):

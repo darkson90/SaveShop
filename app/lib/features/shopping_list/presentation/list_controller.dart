@@ -38,7 +38,7 @@ class ListController extends AsyncNotifier<ShoppingList> {
     });
     try {
       await _flushQueue();
-      final list = await _repo.currentList(preferredId: await _local.readCurrentListId());
+      final list = await _withQueued(await _repo.currentList(preferredId: await _local.readCurrentListId()));
       await _local.writeCachedList(list.toJson());
       _watch(list.id);
       return list;
@@ -64,10 +64,11 @@ class ListController extends AsyncNotifier<ShoppingList> {
       final saved = await _repo.addItem(list.id, body, key);
       _replace(temp.id, saved);
       ref.invalidate(frequentProductsProvider);
-      unawaited(_flushQueue()); // la rete è tornata: inviamo anche ciò che era rimasto in coda
+      // La rete c'è: si invia anche ciò che era rimasto in coda e si allinea la lista al server.
+      if (await _flushQueue() > 0) await reload();
     } on ApiException catch (e) {
       if (e.isNetwork) {
-        await _local.enqueue(PendingOp(listId: list.id, idempotencyKey: key, body: body, itemId: temp.id));
+        await _local.enqueue(PendingOp(listId: list.id, idempotencyKey: key, body: body, itemId: temp.id, label: label));
       } else {
         _remove(temp.id);
         rethrow;
@@ -143,9 +144,7 @@ class ListController extends AsyncNotifier<ShoppingList> {
     if (current == null) return;
     try {
       await _flushQueue();
-      final fresh = await _repo.getList(current.id);
-      final pending = current.items.where((i) => i.pending);
-      _set(fresh.copyWith(items: [...fresh.items, ...pending]));
+      _set(await _withQueued(await _repo.getList(current.id)));
     } on ApiException catch (e) {
       if (e.status == 404) ref.invalidateSelf(); // rimossi dalla lista o lista eliminata
     }
@@ -192,15 +191,36 @@ class ListController extends AsyncNotifier<ShoppingList> {
     await _local.writeQueue(PendingOp.compact([...await _local.readQueue(), op]));
   }
 
+  /// La lista del server più gli articoli ancora in coda offline, mostrati come "in attesa".
+  /// (Prima si riaggiungevano gli articoli in attesa della lista locale anche quando la coda li aveva
+  /// già inviati, e comparivano due volte.)
+  Future<ShoppingList> _withQueued(ShoppingList fresh) async {
+    final queued = (await _local.readQueue()).where((o) => o.kind == 'add' && o.listId == fresh.id);
+    if (queued.isEmpty) return fresh;
+    return fresh.copyWith(items: [
+      ...fresh.items,
+      for (final o in queued)
+        ListItem(
+          id: o.itemId ?? 'tmp-${o.idempotencyKey}',
+          raw: o.label ?? (o.body['raw'] as String? ?? 'Articolo'),
+          quantity: (o.body['quantity'] as num?)?.toDouble() ?? 1,
+          unit: 'pz',
+          checked: false,
+          pending: true,
+        ),
+    ]);
+  }
+
   bool _flushing = false;
 
-  /// Rinvia la coda nell'ordine in cui le modifiche sono state fatte.
-  Future<void> _flushQueue() async {
-    if (_flushing) return;
+  /// Rinvia la coda nell'ordine in cui le modifiche sono state fatte; restituisce quante ne ha inviate.
+  Future<int> _flushQueue() async {
+    if (_flushing) return 0;
     _flushing = true;
+    var sent = 0;
     try {
       final queue = PendingOp.compact(await _local.readQueue());
-      if (queue.isEmpty) return;
+      if (queue.isEmpty) return 0;
       final remaining = <PendingOp>[];
       var offline = false;
       for (final op in queue) {
@@ -217,6 +237,7 @@ class ListController extends AsyncNotifier<ShoppingList> {
             default:
               await _repo.addItem(op.listId, op.body, op.idempotencyKey);
           }
+          sent++;
         } on ApiException catch (e) {
           // Ancora senza rete: si riprova più tardi, rispettando l'ordine.
           // Altri errori (es. articolo già rimosso da un altro membro): l'operazione non vale più.
@@ -227,6 +248,7 @@ class ListController extends AsyncNotifier<ShoppingList> {
         }
       }
       await _local.writeQueue(remaining);
+      return sent;
     } finally {
       _flushing = false;
     }

@@ -4,6 +4,8 @@ import { env } from './config';
 import { uuidv7 } from './ids';
 
 export const EXCHANGE = 'spesa.events';
+/** Messaggi falliti due volte: restano qui per essere ispezionati e, se serve, rimessi in coda. */
+export const DEAD_LETTER_QUEUE = 'spesa.dead';
 
 export interface EventEnvelope<T = unknown> {
   eventId: string;
@@ -34,6 +36,9 @@ type Handler = (event: EventEnvelope<any>) => Promise<void>;
 export class EventBus {
   private connection?: Awaited<ReturnType<typeof amqp.connect>>;
   private channel?: amqp.Channel;
+  /** Canale con conferme del broker: un evento è "pubblicato" solo quando RabbitMQ lo ha preso in carico. */
+  private confirmChannel?: amqp.ConfirmChannel;
+  private closing = false;
 
   constructor(private readonly url = env('AMQP_URL', 'amqp://guest:guest@rabbitmq:5672')) {}
 
@@ -42,8 +47,18 @@ export class EventBus {
       try {
         this.connection = await amqp.connect(this.url);
         this.channel = await this.connection.createChannel();
+        this.confirmChannel = await this.connection.createConfirmChannel();
         await this.channel.assertExchange(EXCHANGE, 'topic', { durable: true });
+        await this.channel.assertQueue(DEAD_LETTER_QUEUE, { durable: true });
         await this.channel.prefetch(20);
+        // Connessione persa (broker riavviato, rete): senza bus il servizio non può funzionare
+        // correttamente, quindi esce e lascia che Docker/Kubernetes lo riavvii pulito.
+        this.connection.on('close', () => {
+          if (this.closing) return;
+          console.error('[events] connessione a RabbitMQ persa: riavvio del servizio');
+          process.exit(1);
+        });
+        this.connection.on('error', (err) => console.error('[events] errore RabbitMQ:', err.message));
         return;
       } catch (err) {
         if (attempt >= retries) throw err;
@@ -52,13 +67,21 @@ export class EventBus {
     }
   }
 
-  async publish(envelope: EventEnvelope): Promise<void> {
-    if (!this.channel) throw new Error('EventBus non connesso');
-    this.channel.publish(EXCHANGE, envelope.type, Buffer.from(JSON.stringify(envelope)), {
-      persistent: true,
-      contentType: 'application/json',
-      messageId: envelope.eventId,
-    });
+  get connected(): boolean {
+    return !!this.channel && !this.closing;
+  }
+
+  /** Pubblica un lotto di eventi e attende la conferma del broker per tutti. */
+  async publish(...envelopes: EventEnvelope[]): Promise<void> {
+    if (!this.confirmChannel) throw new Error('EventBus non connesso');
+    for (const envelope of envelopes) {
+      this.confirmChannel.publish(EXCHANGE, envelope.type, Buffer.from(JSON.stringify(envelope)), {
+        persistent: true,
+        contentType: 'application/json',
+        messageId: envelope.eventId,
+      });
+    }
+    await this.confirmChannel.waitForConfirms();
   }
 
   /** Crea una coda durevole per il servizio e la lega ai tipi di evento richiesti. */
@@ -74,7 +97,17 @@ export class EventBus {
         ch.ack(msg);
       } catch (err) {
         console.error(`[events] errore su ${queue}:`, err);
-        ch.nack(msg, false, !msg.fields.redelivered); // un secondo tentativo, poi scarta
+        if (!msg.fields.redelivered) {
+          ch.nack(msg, false, true); // un secondo tentativo
+          return;
+        }
+        // Fallito due volte: messo da parte in una coda da ispezionare invece di perderlo.
+        ch.sendToQueue(DEAD_LETTER_QUEUE, msg.content, {
+          persistent: true,
+          contentType: 'application/json',
+          headers: { 'x-original-queue': queue, 'x-error': String((err as Error)?.message ?? err).slice(0, 500) },
+        });
+        ch.ack(msg);
       }
     });
   }
@@ -109,6 +142,8 @@ export class EventBus {
   }
 
   async close(): Promise<void> {
+    this.closing = true;
+    await this.confirmChannel?.close().catch(() => undefined);
     await this.channel?.close().catch(() => undefined);
     await this.connection?.close().catch(() => undefined);
   }
@@ -125,25 +160,29 @@ export function startOutboxRelay(pool: Pool, bus: EventBus, intervalMs = 500): N
   return setInterval(async () => {
     if (running) return;
     running = true;
-    const client = await pool.connect();
+    let client: PoolClient | undefined;
     try {
+      // Controllo leggero (indice parziale) prima di aprire una transazione: quasi sempre l'outbox è vuota.
+      const pending = await pool.query('SELECT 1 FROM outbox WHERE published_at IS NULL LIMIT 1');
+      if (!pending.rowCount) return;
+      client = await pool.connect();
       await client.query('BEGIN');
       const { rows } = await client.query(
         `SELECT id, type, payload, created_at FROM outbox
          WHERE published_at IS NULL ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED`,
       );
-      for (const row of rows) {
-        await bus.publish({ eventId: row.id, type: row.type, occurredAt: row.created_at.toISOString(), payload: row.payload });
-      }
+      await bus.publish(
+        ...rows.map((row) => ({ eventId: row.id, type: row.type, occurredAt: row.created_at.toISOString(), payload: row.payload })),
+      );
       if (rows.length) {
         await client.query('UPDATE outbox SET published_at = now() WHERE id = ANY($1)', [rows.map((r) => r.id)]);
       }
       await client.query('COMMIT');
     } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
+      await client?.query('ROLLBACK').catch(() => undefined);
       console.error('[outbox] relay fallito:', err);
     } finally {
-      client.release();
+      client?.release();
       running = false;
     }
   }, intervalMs);

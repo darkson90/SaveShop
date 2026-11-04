@@ -58,7 +58,11 @@ class ComparisonScreen extends ConsumerWidget {
             value: comparison,
             onRetry: () => ref.invalidate(comparisonProvider),
             data: (c) => RefreshIndicator(
-              onRefresh: () => ref.refresh(comparisonProvider.future),
+              // Tirando giù si aggiorna anche la posizione: ci si può essere spostati.
+              onRefresh: () async {
+                ref.invalidate(searchContextProvider);
+                return ref.refresh(comparisonProvider.future);
+              },
               child: switch (c.mode) {
                 CompareMode.singleStore => _SingleStoreList(c),
                 CompareMode.twoStores => _PairsList(c),

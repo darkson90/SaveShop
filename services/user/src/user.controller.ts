@@ -1,5 +1,6 @@
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import {
+  BadRequestException,
   Body,
   ConflictException,
   Controller,
@@ -68,6 +69,7 @@ export class UserController {
     const radius = optNumber(body.defaultRadiusKm, 'defaultRadiusKm', 1, 25);
     const lat = optNumber(body.home?.lat, 'home.lat', -90, 90);
     const lng = optNumber(body.home?.lng, 'home.lng', -180, 180);
+    if ((lat === undefined) !== (lng === undefined)) throw new BadRequestException('Indica sia home.lat sia home.lng');
     const name = typeof body.displayName === 'string' ? body.displayName.slice(0, 80) : undefined;
     await this.pool.query(
       `UPDATE users SET

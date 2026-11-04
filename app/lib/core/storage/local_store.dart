@@ -61,6 +61,7 @@ class PendingOp {
     required this.body,
     this.kind = 'add',
     this.itemId,
+    this.label,
   });
 
   /// 'add' | 'update' | 'remove'
@@ -72,19 +73,23 @@ class PendingOp {
   final String? itemId;
   final Map<String, dynamic> body;
 
+  /// Nome mostrato in lista per un'aggiunta ancora da inviare.
+  final String? label;
+
   factory PendingOp.fromJson(Map<String, dynamic> j) => PendingOp(
         kind: j['kind'] as String? ?? 'add', // le code salvate prima della v1.3 contengono solo aggiunte
         listId: j['listId'] as String,
         idempotencyKey: j['idempotencyKey'] as String,
         itemId: j['itemId'] as String?,
+        label: j['label'] as String?,
         body: Map<String, dynamic>.from(j['body'] as Map),
       );
 
   Map<String, dynamic> toJson() =>
-      {'kind': kind, 'listId': listId, 'idempotencyKey': idempotencyKey, 'itemId': itemId, 'body': body};
+      {'kind': kind, 'listId': listId, 'idempotencyKey': idempotencyKey, 'itemId': itemId, 'label': label, 'body': body};
 
-  PendingOp copyWith({Map<String, dynamic>? body}) =>
-      PendingOp(kind: kind, listId: listId, idempotencyKey: idempotencyKey, itemId: itemId, body: body ?? this.body);
+  PendingOp copyWith({Map<String, dynamic>? body}) => PendingOp(
+      kind: kind, listId: listId, idempotencyKey: idempotencyKey, itemId: itemId, label: label, body: body ?? this.body);
 
   /// Riduce la coda prima dell'invio:
   /// - più modifiche dello stesso articolo diventano una sola (vince l'ultimo valore);

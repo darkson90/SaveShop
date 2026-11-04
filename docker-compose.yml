@@ -13,6 +13,12 @@ x-node-service: &node-service
     rabbitmq: { condition: service_healthy }
   volumes:
     - ./keys/jwt-public.pem:/run/keys/jwt-public.pem:ro
+  healthcheck:
+    test: ["CMD", "wget", "-qO-", "http://localhost:3000/ready"]
+    interval: 10s
+    timeout: 3s
+    retries: 6
+    start_period: 20s
 
 services:
   gateway:
@@ -104,9 +110,13 @@ services:
       OPEN_PRICES_LON: "12.22"
       OPEN_PRICES_RADIUS_KM: "40"
       INGESTION_INTERVAL_HOURS: "24"
+    # Parte quando catalogo, negozi e pricing sono pronti: prima rischiava di pubblicare prezzi
+    # che nessuno consumava ancora o di non riuscire a risolvere EAN e punti vendita.
     depends_on:
       rabbitmq: { condition: service_healthy }
-      pricing: { condition: service_started }
+      catalog: { condition: service_healthy }
+      store: { condition: service_healthy }
+      pricing: { condition: service_healthy }
 
   postgres:
     image: postgis/postgis:16-3.4

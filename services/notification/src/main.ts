@@ -14,6 +14,11 @@ bootstrap(
   },
   {
     name: 'notification',
+    // Storico offerte oltre 60 giorni e dispositivi non più visti da 6 mesi.
+    maintenance: [
+      "DELETE FROM notifications WHERE created_at < now() - interval '60 days'",
+      "DELETE FROM devices WHERE last_seen < now() - interval '180 days'",
+    ],
     onReady: async (_app, { pool, bus }) => {
       // Proiezione dei prodotti frequenti, alimentata dalle aggiunte alla lista.
       await bus.subscribe('notification.item-added', [Events.ItemAdded], (event) =>

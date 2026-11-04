@@ -1,3 +1,5 @@
+import 'dart:io' show SocketException;
+
 import 'package:dio/dio.dart';
 
 import '../../app/config.dart';
@@ -13,9 +15,12 @@ class ApiException implements Exception {
 
   factory ApiException.from(Object error) {
     if (error is DioException) {
+      // Senza rete Dio può segnalare connectionError, un timeout o "unknown" con una SocketException.
       final network = error.type == DioExceptionType.connectionError ||
           error.type == DioExceptionType.connectionTimeout ||
-          error.type == DioExceptionType.receiveTimeout;
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout ||
+          (error.type == DioExceptionType.unknown && error.error is SocketException);
       if (network) return ApiException('Connessione assente', isNetwork: true);
       final data = error.response?.data;
       final detail = data is Map ? data['detail']?.toString() : null;

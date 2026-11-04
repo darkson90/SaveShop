@@ -5,7 +5,7 @@ https://openfoodfacts.github.io/documentation/docs/Open-prices/). Dati con licen
 ("Prezzi da Open Prices, ODbL") e le modifiche alla base dati condivise alle stesse condizioni.
 
 Ogni prezzo è un'osservazione datata: per ogni coppia (punto vendita, prodotto) teniamo la più recente
-degli ultimi `days` giorni. I punti vendita sono luoghi OpenStreetMap ("osm:node:123"): quelli nuovi
+degli ultimi `days` giorni, con la sua data (il Pricing ignora i prezzi osservati oltre PRICE_MAX_AGE_DAYS). I punti vendita sono luoghi OpenStreetMap ("osm:node:123"): quelli nuovi
 vengono creati nello Store Service, i prodotti nuovi nel catalogo, abbinati per codice a barre.
 """
 import datetime as dt
@@ -38,7 +38,7 @@ class OpenPricesSource:
         lat: float,
         lon: float,
         radius_km: float = 30,
-        days: int = 90,
+        days: int = 60,
         max_pages: int = 20,
         delay_seconds: float = 1.0,
         get_json: Callable[[str], dict] = _http_get_json,
@@ -105,7 +105,9 @@ def to_raw_price(item: dict) -> RawPrice | None:
     osm_id = loc.get("osm_id") or item.get("location_osm_id")
     product = item.get("product") or {}
     address = ", ".join(p for p in [loc.get("osm_address_city"), loc.get("osm_address_postcode")] if p)
+    observed = str(item.get("date") or "")[:10] or None
     return RawPrice(
+        observed_on=observed,
         store_ref=f"osm:{osm_type}:{osm_id}",
         ean=code,
         price=round(regular, 2),

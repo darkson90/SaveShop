@@ -26,13 +26,14 @@ export class ReceiptController {
       [id],
     );
     // Il catalogo conosce sinonimi e abbreviazioni ("latte ps"): una ricerca per riga, in parallelo.
-    const catalog = await Promise.all(
-      parsed.lines.map((l) =>
-        callService<any>(serviceUrl.catalog(), `/internal/products/match?q=${encodeURIComponent(l.text.toLowerCase().slice(0, 120))}`, { asService: true })
-          .then((m) => ({ productId: m.product?.id ?? null, confidence: Number(m.confidence ?? 0) }))
-          .catch(() => ({ productId: null, confidence: 0 })),
-      ),
-    );
+    // Una sola chiamata per tutte le righe (prima erano fino a 150 richieste in parallelo).
+    const catalog = await callService<{ items: Array<{ product: { id: string } | null; confidence: number }> }>(
+      serviceUrl.catalog(),
+      '/internal/products/match-batch',
+      { method: 'POST', asService: true, body: { q: parsed.lines.map((l) => l.text.toLowerCase()) } },
+    )
+      .then((r) => r.items.map((m) => ({ productId: m.product?.id ?? null, confidence: Number(m.confidence ?? 0) })))
+      .catch(() => parsed.lines.map(() => ({ productId: null, confidence: 0 }))); // senza catalogo: solo somiglianza del testo
     const matches = matchLines(
       parsed.lines,
       rows.map((r) => ({ itemId: r.id, label: r.label, productId: r.product_id })),

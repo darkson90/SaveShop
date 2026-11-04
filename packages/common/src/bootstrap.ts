@@ -5,7 +5,7 @@ import { APP_GUARD, NestFactory, Reflector } from '@nestjs/core';
 import { Pool } from 'pg';
 import { JwtAuthGuard } from './auth';
 import { envInt } from './config';
-import { createPool, runMigrations } from './db';
+import { createPool, runMigrations, startMaintenance } from './db';
 import { EventBus, startOutboxRelay } from './events';
 import { ProblemFilter } from './http';
 
@@ -42,9 +42,11 @@ export interface BootstrapOptions {
   publishes?: boolean;
   /** Registra i consumer di eventi dopo l'avvio. */
   onReady?: (app: INestApplication, infra: Infra) => Promise<void>;
+  /** Pulizie periodiche specifiche del servizio (SQL), oltre a outbox e processed_events. */
+  maintenance?: string[];
 }
 
-/** Avvio standard: migrazioni, connessione al bus, prefisso /api/v1, errori RFC 7807, /health. */
+/** Avvio standard: migrazioni, connessione al bus, prefisso /api/v1, errori RFC 7807, /health e /ready. */
 export async function bootstrap(appModule: (infra: Infra) => Type<unknown> | DynamicModule, opts: BootstrapOptions) {
   const pool = createPool();
   await runMigrations(pool, opts.migrationsDir ?? join(process.cwd(), 'migrations'));
@@ -55,10 +57,21 @@ export async function bootstrap(appModule: (infra: Infra) => Type<unknown> | Dyn
   const app = await NestFactory.create(appModule(infra) as any, { logger: ['error', 'warn', 'log'] });
   app.setGlobalPrefix('api/v1');
   app.useGlobalFilters(new ProblemFilter());
-  app.getHttpAdapter().get('/health', (_req: any, res: any) => res.json({ status: 'ok', service: opts.name }));
-  app.enableShutdownHooks();
+  // /health: il processo è vivo (liveness). /ready: può servire richieste, cioè database e bus raggiungibili.
+  const http = app.getHttpAdapter();
+  http.get('/health', (_req: any, res: any) => res.json({ status: 'ok', service: opts.name }));
+  http.get('/ready', async (_req: any, res: any) => {
+    try {
+      await pool.query('SELECT 1');
+      if (!bus.connected) throw new Error('bus non connesso');
+      res.json({ status: 'ready', service: opts.name });
+    } catch (err) {
+      res.status(503).json({ status: 'unavailable', service: opts.name, detail: (err as Error).message });
+    }
+  });
 
   const relay = opts.publishes ? startOutboxRelay(pool, bus) : undefined;
+  const maintenance = startMaintenance(pool, opts.maintenance ?? []);
   await opts.onReady?.(app, infra);
 
   const port = envInt('PORT', 3000);
@@ -67,6 +80,7 @@ export async function bootstrap(appModule: (infra: Infra) => Type<unknown> | Dyn
 
   const shutdown = async () => {
     if (relay) clearInterval(relay);
+    clearInterval(maintenance);
     await app.close();
     await bus.close();
     await pool.end();
