@@ -173,6 +173,31 @@ export class StoreController {
     });
   }
 
+  /**
+   * Interno (Ingestion): punti vendita attivi delle insegne indicate entro l'area di raccolta, per applicare
+   * a tutti i negozi di un'insegna un listino unico (es. i prezzi online di Carrefour).
+   */
+  @ServiceOnly()
+  @Post('internal/stores/chain-members')
+  @HttpCode(200)
+  async chainMembers(@Body() body: any) {
+    const chains: string[] = (Array.isArray(body?.chains) ? body.chains : [])
+      .filter((c: unknown) => typeof c === 'string' && c.trim())
+      .slice(0, 20)
+      .map((c: string) => c.trim().toLowerCase());
+    if (!chains.length) return { items: [] };
+    const lat = reqNumber(body.lat, 'lat', -90, 90);
+    const lng = reqNumber(body.lng, 'lng', -180, 180);
+    const radius = reqNumber(body.radiusKm, 'radiusKm', 1, 500);
+    const { rows } = await this.pool.query(
+      `SELECT s.id, c.name AS chain_name FROM stores s JOIN chains c ON c.id = s.chain_id
+       WHERE s.active AND lower(c.name) = ANY($1)
+         AND ST_DWithin(s.location, ST_MakePoint($3, $2)::geography, $4 * 1000)`,
+      [chains, lat, lng, radius],
+    );
+    return { items: rows.map((r) => ({ id: r.id, chainName: r.chain_name })) };
+  }
+
   /** Interno (Ingestion): risolve il codice del punto vendita della fonte esterna. */
   @ServiceOnly()
   @Get('internal/stores/by-ref')

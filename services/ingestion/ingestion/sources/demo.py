@@ -1,7 +1,7 @@
 """Fonte dimostrativa: genera listini plausibili e deterministici per giorno, sui dati seed.
 
 Sostituirla (o affiancarla) con fonti reali in sources/: API ufficiali, feed, volantini digitali,
-oppure scraper che rispettano robots.txt e i termini d'uso (vedi sources/scraper_template.py).
+oppure scraper che rispettano robots.txt e i termini d'uso (esempio: sources/carrefour.py con gli strumenti di scraping/).
 """
 import datetime as dt
 import random

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import { exec, execSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer } from 'node:http';
+import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
 
 const GATEWAY = process.env.GATEWAY_URL;
@@ -332,6 +333,51 @@ if (process.env.INGESTION_CMD) {
   });
   assert.equal(piavePrices[0].unitPrice, 4.2);
   step(`feed partner: "${partner.name}" con "${piave.name}" a ${piavePrices[0].unitPrice} €`);
+
+  // Sito Carrefour (pagine registrate da carrefour.it servite in locale): negozi, prodotti, promo.
+  const site = 'services/ingestion/tests/fixtures/carrefour';
+  const routes = JSON.parse(readFileSync(`${site}/routes.json`, 'utf8'));
+  const siteBase = 'http://localhost:3998';
+  const seen = [];
+  const carrefour = createServer((req, res) => {
+    seen.push({ path: req.url, ua: req.headers['user-agent'] });
+    const file = routes[req.url.split('?')[0]];
+    if (!file) { res.statusCode = 404; return res.end(); }
+    res.end(readFileSync(`${site}/${file}`, 'utf8').replaceAll('{BASE}', siteBase));
+  });
+  await new Promise((r) => carrefour.listen(3998, r));
+  const scrape = await promisify(exec)(process.env.INGESTION_CMD, {
+    env: { ...process.env, INGESTION_SOURCES: 'carrefour', CARREFOUR_URL: siteBase, SCRAPING_DELAY_SECONDS: '0',
+      OPEN_PRICES_LAT: '46.42', OPEN_PRICES_LON: '12.25', OPEN_PRICES_RADIUS_KM: '40' },
+  });
+  process.stdout.write(scrape.stdout);
+  carrefour.close();
+  assert.ok(seen.every((r) => r.ua.startsWith('SaveShopBot/')), 'User-Agent dichiarato');
+  assert.ok(!seen.some((r) => r.path.startsWith('/p/vietato/')), 'robots.txt rispettato');
+  // Il raggio massimo dell'app è 25 km: il Market è vicino a casa, l'Express (Ponte nelle Alpi) si cerca da lì.
+  const PONTE = { lat: 46.162, lng: 12.299 };
+  const cMarket = (await api('store', `/stores?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=25`)).items.find((s) => s.name === 'Carrefour Market Vodo di Cadore');
+  const cExpress = (await api('store', `/stores?lat=${PONTE.lat}&lng=${PONTE.lng}&radius_km=5`)).items.find((s) => s.name === 'Carrefour Express Ponte nelle Alpi');
+  assert.ok(cMarket && cExpress, 'negozi Carrefour creati dal sito');
+  assert.equal(cMarket.chainName, 'Carrefour Market');
+  assert.equal(cExpress.chainName, 'Carrefour Express');
+  const kitkat = await eventually(async () => {
+    const r = await api('catalog', '/products/suggest?q=kitkat');
+    assert.ok(r.items[0]?.name.startsWith('KITKAT'));
+    return r.items[0];
+  });
+  assert.equal(kitkat.category, 'Dispensa');
+  const smarties = (await api('catalog', '/products/suggest?q=smarties')).items[0];
+  const priceAt = (where, storeId) => eventually(async () => {
+    const r = await api('pricing', `/products/${smarties.id}/prices?lat=${where.lat}&lng=${where.lng}&radius_km=25`);
+    const p = r.items.find((x) => x.storeId === storeId);
+    assert.ok(p, 'prezzo Carrefour presente');
+    return p;
+  });
+  const [atMarket, atExpress] = [await priceAt(HOME, cMarket.id), await priceAt(PONTE, cExpress.id)];
+  assert.deepEqual([atMarket.unitPrice, atMarket.promo, atExpress.unitPrice], [1.99, true, 1.99], 'stesso listino online su entrambi');
+  assert.equal((await api('catalog', '/products/suggest?q=macchinina')).items.filter((p) => p.name.includes('Macchinina')).length, 0, 'niente prodotti non di spesa');
+  step(`sito Carrefour: 2 negozi, "${kitkat.name}" in catalogo, Smarties in promo a ${atMarket.unitPrice} € in entrambi, robots.txt rispettato`);
 }
 
 // 10. Pannello parametri: riservato agli amministratori, modifiche applicate dai servizi senza riavvio

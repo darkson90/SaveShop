@@ -23,7 +23,7 @@ spesa-smart/
 │   ├── analytics/        # storico acquisti e metriche del profilo
 │   ├── notification/     # offerte sui prodotti frequenti: push FCM e casella "Offerte per te"
 │   ├── config/           # parametri modificabili a runtime e pannello di amministrazione (/admin/)
-│   └── ingestion/        # Python: raccolta prezzi e pubblicazione di PricesUpdated
+│   └── ingestion/        # Python: raccolta prezzi (Open Prices, siti dei supermercati, feed) e PricesUpdated
 ├── infra/postgres/       # creazione di un database per servizio
 ├── scripts/              # chiavi JWT, avvio locale senza Docker
 └── tests/                # unit test (parser, motore prezzi) e test end-to-end
@@ -149,6 +149,35 @@ segnalati dalla comunità con scontrino o foto del cartellino, tramite un'API pu
 - Copertura: i dati dipendono dalle segnalazioni. Nel bellunese oggi sono pochi; chiunque può
   contribuire con l'app Open Prices, e i prezzi entrano qui al giro notturno successivo.
 
+## Prezzi dai siti dei supermercati (scraping)
+
+L'Ingestion legge i siti delle catene con prezzi pubblici. Oggi è attiva **Carrefour** (fonte `carrefour`,
+attiva di default con `demo` e `open_prices`); gli strumenti in `services/ingestion/ingestion/scraping/`
+servono anche per aggiungere altre catene.
+
+- **Cosa legge**: dalla sitemap dei negozi i punti vendita Carrefour con le coordinate (creati nello
+  Store Service, insegna per formato: Iper, Market, Express); dalla sitemap dei prodotti le pagine
+  prodotto, da cui prende codice a barre, nome, marca, confezione, prezzo, prezzo barrato delle
+  promozioni e categoria. Restano fuori i prodotti non di spesa e i codici a peso variabile.
+- **Prezzi d'insegna**: sono i prezzi della spesa online, uguali in tutta Italia. Si applicano ai negozi
+  Carrefour dell'area di raccolta, per i formati scelti nel pannello. Nei negozi possono differire,
+  soprattutto negli Express.
+- **Rispetto del sito**: robots.txt letto e rispettato (ricerca e carrello sono vietati e non li usiamo),
+  User-Agent `SaveShopBot` con il link al progetto, una pagina alla volta con pausa (1,5 s, o il
+  Crawl-delay del sito se più lungo), stop su 403 o dopo troppi errori di fila, tetto di pagine per notte.
+- **Rotazione**: con 1.500 pagine per notte (circa 40 minuti) metà va ai prodotti già nel catalogo e metà
+  agli altri, con una finestra diversa ogni giorno; i circa 24.000 prodotti si coprono in un paio di settimane.
+- **Dal pannello** (sezione Raccolta prezzi): fonti attive, area di raccolta, pagine per notte, pausa,
+  aggiunta di prodotti nuovi al catalogo, formati Carrefour a cui applicare i prezzi.
+- **Verifiche**: struttura del sito controllata il 4 novembre 2026 su pagine reali (sitemap, JSON-LD,
+  prezzi barrati, categorie, pagine dei negozi). I test usano copie ridotte di quelle pagine
+  (`services/ingestion/tests/fixtures/carrefour`); se il sito cambia, il giro registra 0 prezzi nel log
+  invece di salvare dati sbagliati.
+- **Altre catene valutate**: Conad mostra i prezzi solo dopo aver scelto un punto vendita (i negozi sono
+  indipendenti), Esselunga non espone il codice a barre; richiedono un lavoro a parte.
+- **Termini d'uso**: prima di andare in produzione conviene leggere le condizioni del sito Carrefour e,
+  se possibile, chiedere un accordo o un feed: è la strada più solida.
+
 ## Listini dei negozi partner
 
 Un negozio può pubblicare il proprio listino come file JSON (formato in
@@ -245,6 +274,7 @@ Una webapp di amministrazione per cambiare i parametri dell'app senza ridistribu
 - `GET /notifications`, `POST /notifications/read`: casella "Offerte per te".
 - `POST /lists/{id}/invites`, `POST /lists/join`, `GET /lists/{id}/members`, `DELETE /lists/{id}/members/{userId}`.
 - `GET /lists/{id}/live` (WebSocket) e `POST /lists/{id}/receipt`; `POST /lists/{id}/purchase` accetta `paidPrices`.
+- Interni per l'Ingestion: `POST /internal/stores/chain-members` (negozi di un'insegna nell'area).
 - `GET /config/public` (senza accesso) e, per il pannello, `POST /admin/login`, `GET` / `PATCH /admin/settings`,
   `GET /admin/audit`, `GET /admin/status`.
 
@@ -256,8 +286,9 @@ Una webapp di amministrazione per cambiare i parametri dell'app senza ridistribu
   `PricesUpdated`), mentre i prezzi si leggono da PostgreSQL con indice dedicato.
 - **analytics_db** ha la colonna `comparable_paid`, necessaria per escludere dal risparmio gli
   articoli assenti nel negozio di riferimento, come richiesto dalla sezione Metriche.
-- **Dati dimostrativi**: insegne, punti vendita (area del Cadore) e prezzi sono fittizi. Le fonti reali
-  vanno aggiunte in `services/ingestion/ingestion/sources/` (vedi `scraper_template.py`).
+- **Dati dimostrativi**: insegne, punti vendita (area del Cadore) e prezzi della fonte `demo` sono
+  fittizi. Fonti reali: Open Prices, sito Carrefour, feed dei partner; altre catene vanno aggiunte in
+  `services/ingestion/ingestion/sources/` con gli strumenti di `scraping/`.
 
 ## Produzione (Kubernetes)
 
@@ -271,11 +302,11 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
 
 - Backend: NestJS 12, nessuna vulnerabilità nota nelle dipendenze (`npm audit`, controllato anche in CI).
   Compilato con controlli TypeScript stretti e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e
-  Redis; 37 unit test Node, i test Python dell'Ingestion e
+  Redis; 38 unit test Node, i test Python dell'Ingestion e
   il test end-to-end passano. Il percorso: registrazione → lista → blacklist → confronto → spesa →
   metriche → offerte notificate senza doppioni → endpoint interni protetti → lista condivisa con un
   secondo utente e aggiornamento via WebSocket → chiusura con lo scontrino → uscita del membro →
-  prezzi Open Prices (con un server che simula l'API) → feed partner → pannello parametri (accesso
+  prezzi Open Prices (con un server che simula l'API) → feed partner → sito Carrefour simulato (negozi, prodotti, promo, robots.txt) → pannello parametri (accesso
   negato ai non admin, modifica applicata subito dal List Service, registrazioni chiuse e riaperte,
   registro, ripristino) → cancellazione account.
   Il test copre anche link d'invito, pagina di atterraggio e file `.well-known`, più i casi limite

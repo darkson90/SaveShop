@@ -18,7 +18,13 @@ const RULES: Array<{ category: string; tags: string[] }> = [
 ];
 
 /** Prodotti non alimentari (Open Beauty Facts / Open Products Facts) e default. */
+/** Categorie del catalogo indicabili direttamente da una fonte con il tag "saveshop:<categoria>". */
+export const CATALOG_CATEGORIES = ['Latticini', 'Panetteria', 'Frutta e verdura', 'Carne e pesce', 'Dispensa', 'Bevande', 'Casa e igiene', 'Surgelati'];
+
 export function mapCategory(tags: string[] | undefined, source?: string): string {
+  // Fonti che classificano da sé (es. i siti dei supermercati, già mappati dall'ingestion).
+  const direct = (tags ?? []).find((t) => t.startsWith('saveshop:') && CATALOG_CATEGORIES.includes(t.slice(9)));
+  if (direct) return direct.slice(9);
   if (source === 'obf' || source === 'opf') return 'Casa e igiene';
   const set = new Set(tags ?? []);
   for (const rule of RULES) if (rule.tags.some((t) => set.has(t))) return rule.category;

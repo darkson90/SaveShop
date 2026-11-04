@@ -26,7 +26,7 @@ spec:
               env:
                 - { name: INGESTION_MODE, value: once }
                 # In produzione solo fonti reali: i listini "demo" sono fittizi.
-                - { name: INGESTION_SOURCES, value: open_prices }
+                - { name: INGESTION_SOURCES, value: "open_prices,carrefour" }
                 - { name: OPEN_PRICES_LAT, value: "46.14" }
                 - { name: OPEN_PRICES_LON, value: "12.22" }
                 - { name: OPEN_PRICES_RADIUS_KM, value: "40" }

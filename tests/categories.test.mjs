@@ -27,3 +27,8 @@ test('packageSize: unità base del catalogo', () => {
   assert.equal(packageSize(6, 'pz'), null);
   assert.equal(packageSize(null, 'g'), null);
 });
+
+test('categoria indicata dalla fonte (siti dei supermercati)', () => {
+  assert.equal(mapCategory(['saveshop:Latticini'], 'carrefour'), 'Latticini');
+  assert.equal(mapCategory(['saveshop:Inventata', 'en:beverages'], 'carrefour'), 'Bevande');
+});

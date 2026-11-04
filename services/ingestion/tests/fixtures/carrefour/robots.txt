@@ -1,0 +1,10 @@
+User-agent: dotbot
+Disallow: /
+
+User-agent: *
+Disallow: /search
+Disallow: /multisearch
+Disallow: /cart
+Disallow: /p/vietato/
+
+Sitemap: {BASE}/sitemap_index.xml

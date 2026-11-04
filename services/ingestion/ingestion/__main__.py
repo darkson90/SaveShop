@@ -10,6 +10,8 @@ import uuid
 import pika
 
 from .sources import RawPrice, Source
+from .scraping import PoliteFetcher
+from .sources.carrefour import CarrefourSource
 from .sources.demo import DemoSource
 from .sources.feeds import FeedSource
 from .sources.open_prices import OpenPricesSource
@@ -49,23 +51,45 @@ def as_list(raw: str) -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
+def as_bool(raw: str) -> bool:
+    return raw.strip().lower() in ("1", "true", "si", "sì", "yes")
+
+
+def area(values: dict) -> tuple[float, float, float]:
+    """Area di raccolta (centro e raggio): Open Prices e listini d'insegna dei siti dei supermercati."""
+    return (
+        float(setting(values, "ingestion.openPricesLat", "OPEN_PRICES_LAT", 46.14, float)),  # Belluno
+        float(setting(values, "ingestion.openPricesLon", "OPEN_PRICES_LON", 12.22, float)),
+        float(setting(values, "ingestion.openPricesRadiusKm", "OPEN_PRICES_RADIUS_KM", 40, float)),
+    )
+
+
 def build_sources(values: dict | None = None) -> list[Source]:
-    """Fonti attive (parametro ingestion.sources): demo, open_prices, feeds."""
+    """Fonti attive (parametro ingestion.sources): demo, open_prices, feeds, carrefour."""
     values = panel_settings() if values is None else values
+    lat, lon, radius = area(values)
     sources: list[Source] = []
-    for name in setting(values, "ingestion.sources", "INGESTION_SOURCES", ["demo", "open_prices"], as_list):
+    for name in setting(values, "ingestion.sources", "INGESTION_SOURCES", ["demo", "open_prices", "carrefour"], as_list):
         if name == "demo":
             sources.append(DemoSource())
         elif name == "open_prices":
             sources.append(OpenPricesSource(
-                lat=float(setting(values, "ingestion.openPricesLat", "OPEN_PRICES_LAT", 46.14, float)),  # Belluno
-                lon=float(setting(values, "ingestion.openPricesLon", "OPEN_PRICES_LON", 12.22, float)),
-                radius_km=float(setting(values, "ingestion.openPricesRadiusKm", "OPEN_PRICES_RADIUS_KM", 40, float)),
+                lat=lat, lon=lon, radius_km=radius,
                 days=int(setting(values, "ingestion.openPricesDays", "OPEN_PRICES_DAYS", 60, int)),
             ))
         elif name == "feeds":
             # URL o percorsi dei feed dei negozi partner (docs/feed-format.md).
             sources.append(FeedSource(setting(values, "ingestion.feeds", "INGESTION_FEEDS", [], as_list)))
+        elif name == "carrefour":
+            fetcher = PoliteFetcher(
+                delay_seconds=float(setting(values, "scraping.delaySeconds", "SCRAPING_DELAY_SECONDS", 1.5, float)),
+                max_requests=int(setting(values, "scraping.maxRequestsPerRun", "SCRAPING_MAX_REQUESTS", 1500, int)),
+            )
+            sources.append(CarrefourSource(
+                fetcher,
+                formats=setting(values, "scraping.carrefourFormats", "CARREFOUR_FORMATS", ["iper", "market", "express", "altri"], as_list),
+                create_products=bool(setting(values, "scraping.createProducts", "SCRAPING_CREATE_PRODUCTS", True, as_bool)),
+            ))
         else:
             print(f"[ingestion] fonte sconosciuta ignorata: {name}", flush=True)
     return sources
@@ -97,10 +121,13 @@ def post_json(url: str, body: dict) -> dict:
         return json.loads(res.read())
 
 
-def create_missing(raw: list[RawPrice], products: dict[str, str], stores: dict[str, str]) -> tuple[int, int]:
+def create_missing(
+    raw: list[RawPrice], products: dict[str, str], stores: dict[str, str], extra_stores: dict | None = None,
+) -> tuple[int, int]:
     """Crea nel catalogo e nello Store Service i prodotti e i negozi nuovi portati da una fonte."""
     new_products = {r.ean: r.product for r in raw if r.ean not in products and r.product and r.product.name}
     new_stores = {r.store_ref: r.store for r in raw if r.store_ref not in stores and r.store}
+    new_stores.update({ref: st for ref, st in (extra_stores or {}).items() if ref not in stores})
     for i in range(0, len(new_products), BATCH_SIZE):
         chunk = list(new_products.items())[i:i + BATCH_SIZE]
         res = post_json(f"{CATALOG_URL}/api/v1/internal/products/upsert", {"items": [
@@ -126,21 +153,36 @@ def resolve_maps() -> tuple[dict[str, str], dict[str, str]]:
     return {p["ean"]: p["id"] for p in eans}, {s["externalRef"]: s["id"] for s in refs}
 
 
-def normalize(raw: list[RawPrice], products: dict[str, str], stores: dict[str, str]) -> tuple[list[dict], int]:
+def chain_members(targets: dict[str, list[str]], lat: float, lon: float, radius: float) -> dict[str, list[str]]:
+    """Per i listini d'insegna ("chains:..."): i punti vendita di quelle insegne nell'area di raccolta."""
+    members: dict[str, list[str]] = {}
+    for ref, chains in targets.items():
+        res = post_json(f"{STORE_URL}/api/v1/internal/stores/chain-members",
+                        {"chains": chains, "lat": lat, "lng": lon, "radiusKm": radius})
+        members[ref] = [x["id"] for x in res["items"]]
+    return members
+
+
+def normalize(
+    raw: list[RawPrice], products: dict[str, str], stores: dict[str, str], members: dict[str, list[str]] | None = None,
+) -> tuple[list[dict], int]:
     rows, skipped = [], 0
     for r in raw:
-        product_id, store_id = products.get(r.ean), stores.get(r.store_ref)
-        if not product_id or not store_id or r.price <= 0:
+        product_id = products.get(r.ean)
+        store_ids = (members or {}).get(r.store_ref) if r.store_ref.startswith("chains:") else [stores.get(r.store_ref)]
+        store_ids = [s for s in store_ids or [] if s]
+        if not product_id or not store_ids or r.price <= 0:
             skipped += 1  # in produzione: coda di revisione per il matching manuale
             continue
-        rows.append({
-            "storeId": store_id,
-            "productId": product_id,
-            "price": round(r.price, 2),
-            "promoPrice": round(r.promo_price, 2) if r.promo_price else None,
-            "loyaltyOnly": r.loyalty_only,
-            "observedOn": r.observed_on,
-        })
+        for store_id in store_ids:
+            rows.append({
+                "storeId": store_id,
+                "productId": product_id,
+                "price": round(r.price, 2),
+                "promoPrice": round(r.promo_price, 2) if r.promo_price else None,
+                "loyaltyOnly": r.loyalty_only,
+                "observedOn": r.observed_on,
+            })
     return rows, skipped
 
 
@@ -184,21 +226,27 @@ def publish(channel, source: str, rows: list[dict], started_at: str) -> None:
 
 
 def run_once() -> None:
+    values = panel_settings()
+    lat, lon, radius = area(values)
     products, stores = resolve_maps()
     connection = pika.BlockingConnection(pika.URLParameters(AMQP_URL))
     try:
         channel = connection.channel()
         channel.exchange_declare(exchange=EXCHANGE, exchange_type="topic", durable=True)
         channel.confirm_delivery()
-        for source in build_sources():
+        for source in build_sources(values):
             started_at = dt.datetime.now(dt.timezone.utc).isoformat()
             try:
+                if hasattr(source, "prepare"):
+                    source.prepare(products, stores)
                 raw = list(source.fetch())
-                created_products, created_stores = create_missing(raw, products, stores)
+                created_products, created_stores = create_missing(raw, products, stores, getattr(source, "found_stores", None))
+                targets = getattr(source, "chain_targets", None)
+                members = chain_members(targets, lat, lon, radius) if targets else None
             except Exception as exc:  # una fonte esterna irraggiungibile non blocca le altre
                 print(f"[ingestion] {source.name}: fonte non disponibile ({exc})", flush=True)
                 continue
-            rows, skipped = normalize(raw, products, stores)
+            rows, skipped = normalize(raw, products, stores, members)
             publish(channel, source.name, rows, started_at)
             extra = f", nuovi: {created_products} prodotti, {created_stores} negozi" if created_products or created_stores else ""
             print(f"[ingestion] {source.name}: {len(rows)} prezzi pubblicati, {skipped} scartati{extra}", flush=True)
