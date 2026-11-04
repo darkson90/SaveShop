@@ -15,6 +15,8 @@ from .sources.carrefour import CarrefourSource
 from .sources.demo import DemoSource
 from .sources.feeds import FeedSource
 from .sources.open_prices import OpenPricesSource
+from .sources.osm_stores import OsmStoresSource
+from .sources.carrefour import FORMATS as CARREFOUR_FORMATS
 
 AMQP_URL = os.environ.get("AMQP_URL", "amqp://guest:guest@rabbitmq:5672")
 CATALOG_URL = os.environ.get("CATALOG_URL", "http://catalog:3000")
@@ -69,7 +71,8 @@ def build_sources(values: dict | None = None) -> list[Source]:
     values = panel_settings() if values is None else values
     lat, lon, radius = area(values)
     sources: list[Source] = []
-    for name in setting(values, "ingestion.sources", "INGESTION_SOURCES", ["demo", "open_prices", "carrefour"], as_list):
+    active = setting(values, "ingestion.sources", "INGESTION_SOURCES", ["demo", "open_prices", "osm_stores", "carrefour"], as_list)
+    for name in active:
         if name == "demo":
             sources.append(DemoSource())
         elif name == "open_prices":
@@ -80,6 +83,15 @@ def build_sources(values: dict | None = None) -> list[Source]:
         elif name == "feeds":
             # URL o percorsi dei feed dei negozi partner (docs/feed-format.md).
             sources.append(FeedSource(setting(values, "ingestion.feeds", "INGESTION_FEEDS", [], as_list)))
+        elif name == "osm_stores":
+            whole_italy = bool(setting(values, "ingestion.osmWholeItaly", "OSM_WHOLE_ITALY", True, as_bool))
+            sources.append(OsmStoresSource(
+                every_days=int(setting(values, "ingestion.osmEveryDays", "OSM_EVERY_DAYS", 1, int)),
+                lat=None if whole_italy else lat, lon=None if whole_italy else lon,
+                radius_km=None if whole_italy else radius,
+                # Carrefour crea i suoi negozi dal proprio sito, con i codici del sito: niente doppioni.
+                skip_chains=CARREFOUR_FORMATS.values() if "carrefour" in active else (),
+            ))
         elif name == "carrefour":
             fetcher = PoliteFetcher(
                 delay_seconds=float(setting(values, "scraping.delaySeconds", "SCRAPING_DELAY_SECONDS", 1.5, float)),
@@ -125,7 +137,7 @@ def create_missing(
     raw: list[RawPrice], products: dict[str, str], stores: dict[str, str], extra_stores: dict | None = None,
 ) -> tuple[int, int]:
     """Crea nel catalogo e nello Store Service i prodotti e i negozi nuovi portati da una fonte."""
-    new_products = {r.ean: r.product for r in raw if r.ean not in products and r.product and r.product.name}
+    new_products = {r.ean: r.product for r in raw if r.ean.isdigit() and r.ean not in products and r.product and r.product.name}
     new_stores = {r.store_ref: r.store for r in raw if r.store_ref not in stores and r.store}
     new_stores.update({ref: st for ref, st in (extra_stores or {}).items() if ref not in stores})
     for i in range(0, len(new_products), BATCH_SIZE):
@@ -153,6 +165,28 @@ def resolve_maps() -> tuple[dict[str, str], dict[str, str]]:
     return {p["ean"]: p["id"] for p in eans}, {s["externalRef"]: s["id"] for s in refs}
 
 
+def match_names(raw: list[RawPrice], products: dict[str, str], min_confidence: float) -> int:
+    """Prodotti senza codice a barre (volantini, siti senza EAN): abbinati per nome al catalogo.
+
+    Aggiunge a `products` le chiavi "name:<testo>" abbinate con somiglianza almeno `min_confidence`;
+    gli altri restano scartati (meglio un prezzo in meno che uno sul prodotto sbagliato).
+    """
+    names = sorted({r.product.name for r in raw if not r.ean and r.product and r.product.name and f"name:{r.product.name}" not in products})
+    matched = 0
+    for i in range(0, len(names), 150):
+        chunk = names[i:i + 150]
+        res = post_json(f"{CATALOG_URL}/api/v1/internal/products/match-batch", {"q": chunk})
+        for text, m in zip(chunk, res["items"]):
+            if m.get("product") and float(m.get("confidence") or 0) >= min_confidence:
+                products[f"name:{text}"] = m["product"]["id"]
+                matched += 1
+    return matched
+
+
+def price_key(r: RawPrice) -> str:
+    return r.ean or (f"name:{r.product.name}" if r.product else "")
+
+
 def chain_members(targets: dict[str, list[str]], lat: float, lon: float, radius: float) -> dict[str, list[str]]:
     """Per i listini d'insegna ("chains:..."): i punti vendita di quelle insegne nell'area di raccolta."""
     members: dict[str, list[str]] = {}
@@ -168,7 +202,7 @@ def normalize(
 ) -> tuple[list[dict], int]:
     rows, skipped = [], 0
     for r in raw:
-        product_id = products.get(r.ean)
+        product_id = products.get(price_key(r))
         store_ids = (members or {}).get(r.store_ref) if r.store_ref.startswith("chains:") else [stores.get(r.store_ref)]
         store_ids = [s for s in store_ids or [] if s]
         if not product_id or not store_ids or r.price <= 0:
@@ -241,6 +275,8 @@ def run_once() -> None:
                     source.prepare(products, stores)
                 raw = list(source.fetch())
                 created_products, created_stores = create_missing(raw, products, stores, getattr(source, "found_stores", None))
+                if any(not r.ean for r in raw):
+                    match_names(raw, products, float(setting(values, "scraping.minNameMatch", "SCRAPING_MIN_NAME_MATCH", 0.6, float)))
                 targets = getattr(source, "chain_targets", None)
                 members = chain_members(targets, lat, lon, radius) if targets else None
             except Exception as exc:  # una fonte esterna irraggiungibile non blocca le altre

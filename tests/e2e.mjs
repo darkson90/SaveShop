@@ -334,6 +334,33 @@ if (process.env.INGESTION_CMD) {
   assert.equal(piavePrices[0].unitPrice, 4.2);
   step(`feed partner: "${partner.name}" con "${piave.name}" a ${piavePrices[0].unitPrice} €`);
 
+  // Supermercati da OpenStreetMap (Overpass simulato): negozi di tutte le insegne, senza doppioni.
+  const overpass = createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      assert.ok(decodeURIComponent(body.replace(/\+/g, ' ')).includes('shop'), 'query Overpass');
+      res.setHeader('content-type', 'application/json');
+      res.end(JSON.stringify({ elements: [
+        { type: 'node', id: 990000001, lat: 46.4189, lon: 12.2439, tags: { shop: 'supermarket', brand: 'CONAD', name: 'Conad Vodo', 'addr:city': 'Vodo di Cadore' } },
+        { type: 'way', id: 990000002, center: { lat: 46.4171, lon: 12.2502 }, tags: { shop: 'supermarket', brand: 'Eurospin', name: 'Eurospin' } },
+        { type: 'node', id: 999000111, lat: 46.4195, lon: 12.2465, tags: { shop: 'supermarket', brand: 'Kanguro', name: 'Market Test Vodo' } },
+      ] }));
+    });
+  });
+  await new Promise((r) => overpass.listen(3997, r));
+  const osmRun = await promisify(exec)(process.env.INGESTION_CMD, {
+    env: { ...process.env, INGESTION_SOURCES: 'osm_stores', OVERPASS_URL: 'http://localhost:3997/api/interpreter' },
+  });
+  process.stdout.write(osmRun.stdout);
+  overpass.close();
+  const osmNear = (await api('store', `/stores?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=5`)).items;
+  const conad = osmNear.find((s) => s.name === 'Conad Vodo');
+  assert.equal(conad?.chainName, 'Conad', 'insegna normalizzata');
+  assert.ok(osmNear.some((s) => s.chainName === 'Eurospin'));
+  assert.equal(osmNear.filter((s) => s.name === 'Market Test Vodo').length, 1, 'stesso negozio di Open Prices: nessun doppione');
+  step(`OpenStreetMap: negozi di tutte le insegne (es. "${conad.name}", insegna ${conad.chainName}), senza doppioni con Open Prices`);
+
   // Sito Carrefour (pagine registrate da carrefour.it servite in locale): negozi, prodotti, promo.
   const site = 'services/ingestion/tests/fixtures/carrefour';
   const routes = JSON.parse(readFileSync(`${site}/routes.json`, 'utf8'));

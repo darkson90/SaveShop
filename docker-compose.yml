@@ -117,7 +117,7 @@ services:
       INGESTION_MODE: loop        # "once" per una singola esecuzione (CronJob in produzione)
       # demo = listini dimostrativi; open_prices = prezzi reali di Open Prices (Open Food Facts, ODbL);
       # carrefour = negozi e prezzi online dal sito carrefour.it (robots.txt rispettato, pagine limitate per notte)
-      INGESTION_SOURCES: demo,open_prices,carrefour
+      INGESTION_SOURCES: demo,open_prices,osm_stores,carrefour
       OPEN_PRICES_LAT: "46.14"
       OPEN_PRICES_LON: "12.22"
       OPEN_PRICES_RADIUS_KM: "40"

@@ -104,10 +104,11 @@ export const SETTINGS: SettingDef[] = [
     description: 'Dopo questo tempo senza aprire l\'app bisogna accedere di nuovo.', services: ['auth'] },
 
   // Raccolta prezzi
-  { key: 'ingestion.sources', group: 'ingestion', label: 'Fonti attive', type: 'choices', default: ['demo', 'open_prices', 'carrefour'], env: 'INGESTION_SOURCES',
+  { key: 'ingestion.sources', group: 'ingestion', label: 'Fonti attive', type: 'choices', default: ['demo', 'open_prices', 'osm_stores', 'carrefour'], env: 'INGESTION_SOURCES',
     options: [
       { value: 'demo', label: 'Listini dimostrativi' },
       { value: 'open_prices', label: 'Open Prices (prezzi reali, ODbL)' },
+      { value: 'osm_stores', label: 'Supermercati d\'Italia da OpenStreetMap (solo negozi, ODbL)' },
       { value: 'carrefour', label: 'Sito Carrefour (negozi e prezzi della spesa online)' },
       { value: 'feeds', label: 'Feed dei negozi partner' },
     ],
@@ -122,6 +123,12 @@ export const SETTINGS: SettingDef[] = [
     description: 'Segnalazioni più vecchie non vengono lette.', services: ['ingestion'] },
   { key: 'ingestion.feeds', group: 'ingestion', label: 'Feed dei negozi partner', type: 'list', default: [], env: 'INGESTION_FEEDS',
     description: 'Un indirizzo https:// per riga (formato in docs/feed-format.md). Serve la fonte "Feed dei negozi partner" attiva.', services: ['ingestion'] },
+  { key: 'ingestion.osmWholeItaly', group: 'ingestion', label: 'OpenStreetMap: supermercati di tutta Italia', type: 'bool', default: true, env: 'OSM_WHOLE_ITALY',
+    description: 'Acceso: tutti i supermercati italiani (circa 25.000). Spento: solo quelli dell\'area di raccolta.', services: ['ingestion'] },
+  { key: 'ingestion.osmEveryDays', group: 'ingestion', label: 'OpenStreetMap: aggiorna l\'elenco ogni', type: 'int', default: 1, min: 1, max: 90, unit: 'giorni', env: 'OSM_EVERY_DAYS',
+    description: '1 = ogni notte (una sola richiesta a OpenStreetMap). Con un valore più alto i negozi nuovi arrivano più tardi.', services: ['ingestion'] },
+  { key: 'scraping.minNameMatch', group: 'ingestion', label: 'Somiglianza minima per abbinare per nome', type: 'float', default: 0.6, min: 0.3, max: 1, step: 0.05, env: 'SCRAPING_MIN_NAME_MATCH',
+    description: 'Per le fonti senza codice a barre: sotto questa somiglianza il prezzo viene scartato invece di finire sul prodotto sbagliato.', services: ['ingestion'] },
   { key: 'scraping.maxRequestsPerRun', group: 'ingestion', label: 'Siti dei supermercati: pagine per notte', type: 'int', default: 1500, min: 50, max: 20000, unit: 'pagine', env: 'SCRAPING_MAX_REQUESTS',
     description: 'Tetto di pagine lette da ciascun sito a ogni giro. Il catalogo si copre a rotazione nelle notti successive: più pagine, prezzi più freschi ma giro più lungo.', services: ['ingestion'] },
   { key: 'scraping.delaySeconds', group: 'ingestion', label: 'Siti dei supermercati: pausa tra due pagine', type: 'float', default: 1.5, min: 0.5, max: 30, step: 0.5, unit: 's', env: 'SCRAPING_DELAY_SECONDS',

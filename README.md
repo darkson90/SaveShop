@@ -149,6 +149,22 @@ segnalati dalla comunità con scontrino o foto del cartellino, tramite un'API pu
 - Copertura: i dati dipendono dalle segnalazioni. Nel bellunese oggi sono pochi; chiunque può
   contribuire con l'app Open Prices, e i prezzi entrano qui al giro notturno successivo.
 
+## Tutti i supermercati d'Italia (OpenStreetMap)
+
+La fonte `osm_stores` (attiva di default) legge da OpenStreetMap, con una sola richiesta all'Overpass
+API, tutti i supermercati italiani e i minimarket con insegna: circa 25.000 punti vendita. Li crea nello
+Store Service con l'insegna normalizzata (Conad, Conad City, Coop, Esselunga, Lidl, Eurospin, Despar,
+Famila, MD, Penny, Aldi, Pam, Tigros, Bennet, Crai e altre 40 circa, elenco in
+`services/ingestion/ingestion/sources/osm_stores.py`). Il codice è lo stesso di Open Prices
+(`osm:node:…`), quindi lo stesso negozio non compare due volte; per Carrefour vale l'elenco del sito.
+Così ogni listino d'insegna letto da un sito ha già i suoi negozi in tutta Italia. Dal pannello: tutta
+Italia o solo l'area di raccolta, e ogni quanti giorni rileggere l'elenco. Dati © OpenStreetMap
+contributors, licenza ODbL.
+
+Per le fonti che non pubblicano il codice a barre (volantini, alcuni siti) i prezzi si abbinano al
+catalogo per nome, con una soglia di somiglianza regolabile (`scraping.minNameMatch`, 0,6): sotto la
+soglia il prezzo viene scartato.
+
 ## Prezzi dai siti dei supermercati (scraping)
 
 L'Ingestion legge i siti delle catene con prezzi pubblici. Oggi è attiva **Carrefour** (fonte `carrefour`,
@@ -306,7 +322,7 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
   il test end-to-end passano. Il percorso: registrazione → lista → blacklist → confronto → spesa →
   metriche → offerte notificate senza doppioni → endpoint interni protetti → lista condivisa con un
   secondo utente e aggiornamento via WebSocket → chiusura con lo scontrino → uscita del membro →
-  prezzi Open Prices (con un server che simula l'API) → feed partner → sito Carrefour simulato (negozi, prodotti, promo, robots.txt) → pannello parametri (accesso
+  prezzi Open Prices (con un server che simula l'API) → feed partner → supermercati OpenStreetMap (Overpass simulato) → sito Carrefour simulato (negozi, prodotti, promo, robots.txt) → pannello parametri (accesso
   negato ai non admin, modifica applicata subito dal List Service, registrazioni chiuse e riaperte,
   registro, ripristino) → cancellazione account.
   Il test copre anche link d'invito, pagina di atterraggio e file `.well-known`, più i casi limite
