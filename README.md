@@ -184,16 +184,18 @@ Catene verificate il 4 novembre 2026 sui siti reali:
 | Aldi | ~800 pagine prodotto (assortimento fisso) | nazionali | no: abbinamento per nome |
 | Eurospin | elenco offerte in JSON (~60) | offerte nazionali con scadenza | no: abbinamento per nome |
 | Penny | pagine "Tutte le offerte" (~90) | offerte con validità, prezzi con PENNYCard | no: abbinamento per nome |
+| Coop (EasyCoop, Coop Alleanza 3.0) | ~16.000 pagine prodotto, 600 per notte a rotazione (pagine da ~2 MB) | listino online di Alleanza 3.0, promo con prezzo barrato | sì |
 
-- **Negozi**: i listini sono nazionali e si applicano ai negozi dell'insegna nell'area di raccolta, presi da
+- **Negozi**: i listini sono nazionali (EasyCoop: di Coop Alleanza 3.0) e si applicano ai negozi dell'insegna nell'area di raccolta, presi da
   OpenStreetMap (Carrefour dal proprio sito, con i formati scelti nel pannello).
 - **Offerte a tempo**: la data di fine viene salvata; scaduta l'offerta torna il prezzo pieno, e le voci delle
   fonti di sole offerte (Eurospin senza prezzo barrato) spariscono dai confronti.
 - **Abbinamento per nome**: marca, nome e formato vengono cercati nel catalogo; sotto la soglia del pannello
   (`scraping.minNameMatch`, 0,6) il prezzo è scartato.
 - **Catene escluse e perché**: Esselunga (prezzi solo in sessione; le API sono in percorsi vietati dal
-  robots.txt), Coop e Tigros (prezzi solo dopo aver scelto l'indirizzo di consegna; Tigros vieta le API nel
-  robots.txt), Conad e Despar (prezzi e volantini per singolo punto vendita, dopo averlo scelto), MD e Pam
+  robots.txt), Tigros (prezzi solo dopo aver scelto l'indirizzo di consegna; le API sono vietate dal
+  robots.txt), le altre cooperative Coop (EasyCoop copre Alleanza 3.0: Emilia-Romagna, Veneto e zone vicine;
+  altrove i listini Coop sono diversi), Conad e Despar (prezzi e volantini per singolo punto vendita, dopo averlo scelto), MD e Pam
   (nessun listino o offerta in formato leggibile, solo volantini da sfogliare). Per queste resta Open Prices,
   e un accordo o un feed con la catena (formato in `docs/feed-format.md`) è la strada per averle.
 - **Test**: copie ridotte delle pagine reali in `services/ingestion/tests/fixtures/<catena>` (la pagina del

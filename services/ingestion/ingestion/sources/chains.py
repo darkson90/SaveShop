@@ -1,4 +1,4 @@
-"""Listini d'insegna dai siti delle catene: Lidl, Aldi, Eurospin, Penny.
+"""Listini d'insegna dai siti delle catene: Lidl, Aldi, Eurospin, Penny, EasyCoop (Coop Alleanza 3.0).
 
 Struttura dei siti verificata il 4 novembre 2026 su pagine reali; robots.txt di tutti e quattro consente le
 pagine usate. I prezzi sono nazionali (uguali in tutti i punti vendita della catena) e si applicano ai negozi
@@ -13,7 +13,10 @@ dell'insegna nell'area di raccolta, creati da OpenStreetMap.
 - Penny: pagine "Tutte le offerte" (~90 prodotti, HTML): prezzo, prezzo barrato o prezzo con PENNYCard e
   periodo di validità; niente codice a barre.
 
-Esselunga, Coop, Conad, Tigros, Despar e MD mostrano i prezzi solo dentro una sessione con punto vendita o
+- EasyCoop (Coop Alleanza 3.0): sitemap prodotti (~16.000 pagine); JSON-LD con codice a barre, prezzo e prezzo
+  barrato; a rotazione, con un tetto di pagine per notte perché le pagine sono pesanti.
+
+Esselunga, Conad, Tigros, Despar, MD e Pam mostrano i prezzi solo dentro una sessione con punto vendita o
 indirizzo di consegna, o in parti vietate dal robots.txt: restano fuori (vedi README).
 """
 import datetime as dt
@@ -312,4 +315,72 @@ class PennySource(ChainSource):
             page += 1
 
 
-CHAIN_SOURCES = {"lidl": LidlSource, "aldi": AldiSource, "eurospin": EurospinSource, "penny": PennySource}
+class EasyCoopSource(SitemapJsonLdSource):
+    """EasyCoop, la spesa online di Coop Alleanza 3.0 (Emilia-Romagna, Veneto, Friuli, Lombardia orientale...).
+
+    Verificato il 4 novembre 2026: le pagine prodotto (~16.000, sitemap in due parti) sono pubbliche e hanno il
+    JSON-LD Product con codice a barre (gtin), prezzo e, nelle promozioni, il prezzo barrato
+    (priceSpecification StrikethroughPrice), più la BreadcrumbList. robots.txt vieta /catalog/ e /checkout/,
+    che non usiamo. Le pagine sono pesanti (~2 MB): se ne leggono al massimo `max_pages` per notte, a rotazione.
+    I prezzi sono di Coop Alleanza 3.0: fuori dal suo territorio le altre cooperative Coop hanno listini propri,
+    quindi l'area di raccolta dovrebbe stare nel territorio di Alleanza.
+    """
+
+    name = "web:easycoop"
+    chains = ["Coop"]
+    base_url = os.environ.get("EASYCOOP_URL", "https://www.easycoop.com")
+    sitemap_path = "/sitemap/sitemap.xml"
+    product_url = re.compile(r"^https?://[^/]+/[a-z0-9-]+-\d{6,8}\.html$")
+    max_pages = 600
+
+    def category(self, html: str, product: dict) -> str | None:
+        for node in json_ld_breadcrumbs(html):
+            items = node.get("itemListElement") or []
+            names = [str(i.get("name") or (i.get("item") or {}).get("name") or "") for i in items]
+            return map_category(*names[1:-1])  # senza Home e il prodotto stesso
+        return None
+
+    def parse(self, html: str) -> RawPrice | None:
+        price = super().parse(html)
+        if price is None:
+            return None
+        offers = (json_ld_products(html)[0].get("offers") or {})
+        offers = offers[0] if isinstance(offers, list) and offers else offers
+        spec = offers.get("priceSpecification") if isinstance(offers, dict) else None
+        specs = spec if isinstance(spec, list) else [spec] if spec else []
+        strike = next((parse_price(s.get("price")) for s in specs
+                       if isinstance(s, dict) and "Strikethrough" in str(s.get("priceType", ""))), None)
+        if strike and strike > price.price:
+            return RawPrice(store_ref=price.store_ref, ean=price.ean, price=strike, promo_price=price.price,
+                            product=price.product, observed_on=price.observed_on)
+        return price
+
+    def collect(self) -> Iterable[RawPrice]:
+        from .carrefour import rotate  # stessa rotazione deterministica per giorno
+
+        res = self.fetcher.get(f"{self.base}{self.sitemap_path}")
+        if res is None:
+            raise SiteUnavailable("sitemap non disponibile")
+        pages, children = parse_sitemap(res.body)
+        urls = [e.loc for e in pages]
+        for child in children:
+            sub = self.fetcher.get(child)
+            if sub is not None:
+                urls += [e.loc for e in parse_sitemap(sub.body)[0]]
+        urls = [u.replace("https://www.easycoop.com", self.base) for u in urls if self.product_url.search(u)]
+        # Il codice nell'URL è quello interno di Coop, non l'EAN: rotazione unica su tutto l'elenco.
+        budget = min(self.max_pages, self.fetcher.remaining)
+        for url in rotate(urls, budget, self.today.toordinal()):
+            page = self.fetcher.get(url)
+            if page is None:
+                continue
+            self.stats["pages"] += 1
+            price = self.parse(page.text())
+            if price is None:
+                self.stats["skipped"] += 1
+                continue
+            yield price
+
+
+CHAIN_SOURCES = {"lidl": LidlSource, "aldi": AldiSource, "eurospin": EurospinSource, "penny": PennySource,
+                 "easycoop": EasyCoopSource}

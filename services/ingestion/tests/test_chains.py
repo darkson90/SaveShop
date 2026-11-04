@@ -1,11 +1,11 @@
-"""Listini delle catene (Lidl, Aldi, Eurospin, Penny) su pagine registrate: python -m unittest discover -s tests"""
+"""Listini delle catene (Lidl, Aldi, Eurospin, Penny, EasyCoop) su pagine registrate: python -m unittest discover -s tests"""
 import datetime as dt
 import unittest
 
 from carrefour_site import FakeSite
 from ingestion.__main__ import DEFAULT_SOURCES, build_sources
 from ingestion.scraping import PoliteFetcher
-from ingestion.sources.chains import AldiSource, EurospinSource, LidlSource, PennySource
+from ingestion.sources.chains import AldiSource, EasyCoopSource, EurospinSource, LidlSource, PennySource
 
 TODAY = dt.date(2026, 11, 4)
 
@@ -66,6 +66,24 @@ class WiringTest(unittest.TestCase):
             self.assertIn(expected, names)
         fetchers = [s.fetcher for s in build_sources({"ingestion.sources": ["lidl", "aldi"]})]
         self.assertIsNot(fetchers[0], fetchers[1])  # tetto di pagine separato per sito
+
+
+class EasyCoopTest(unittest.TestCase):
+    def test_listino(self):
+        s = source(EasyCoopSource, "easycoop", "https://www.easycoop.com")
+        prices = {p.ean: p for p in s.fetch()}
+        self.assertEqual(set(prices), {"8001120656902", "8002670000122"})  # niente pastelli, niente pagine categoria
+        sugo, latte = prices["8001120656902"], prices["8002670000122"]
+        self.assertEqual((sugo.price, sugo.promo_price, sugo.product.categories), (2.1, None, ("saveshop:Dispensa",)))
+        self.assertEqual((latte.price, latte.promo_price, latte.product.categories), (1.89, 1.49, ("saveshop:Latticini",)))
+        self.assertEqual(s.chain_targets, {"chains:easycoop": ["Coop"]})
+
+    def test_tetto_di_pagine(self):
+        s = source(EasyCoopSource, "easycoop", "https://www.easycoop.com")
+        s.max_pages = 1
+        self.assertEqual(s.stats["pages"], 0)
+        s.fetch()
+        self.assertEqual(s.stats["pages"], 1)
 
 
 if __name__ == "__main__":

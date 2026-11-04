@@ -104,7 +104,7 @@ export const SETTINGS: SettingDef[] = [
     description: 'Dopo questo tempo senza aprire l\'app bisogna accedere di nuovo.', services: ['auth'] },
 
   // Raccolta prezzi
-  { key: 'ingestion.sources', group: 'ingestion', label: 'Fonti attive', type: 'choices', default: ['demo', 'open_prices', 'osm_stores', 'carrefour', 'lidl', 'aldi', 'eurospin', 'penny'], env: 'INGESTION_SOURCES',
+  { key: 'ingestion.sources', group: 'ingestion', label: 'Fonti attive', type: 'choices', default: ['demo', 'open_prices', 'osm_stores', 'carrefour', 'lidl', 'aldi', 'eurospin', 'penny', 'easycoop'], env: 'INGESTION_SOURCES',
     options: [
       { value: 'demo', label: 'Listini dimostrativi' },
       { value: 'open_prices', label: 'Open Prices (prezzi reali, ODbL)' },
@@ -114,6 +114,7 @@ export const SETTINGS: SettingDef[] = [
       { value: 'aldi', label: 'Sito Aldi (assortimento con prezzi nazionali, abbinato per nome)' },
       { value: 'eurospin', label: 'Sito Eurospin (offerte nazionali, abbinate per nome)' },
       { value: 'penny', label: 'Sito Penny (offerte della settimana, anche con PENNYCard)' },
+      { value: 'easycoop', label: 'EasyCoop, spesa online Coop Alleanza 3.0 (Emilia-Romagna, Veneto e vicine)' },
       { value: 'feeds', label: 'Feed dei negozi partner' },
     ],
     description: 'Usate dal giro notturno successivo. In produzione disattiva i listini dimostrativi.', services: ['ingestion'] },

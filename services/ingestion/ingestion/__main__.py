@@ -58,7 +58,7 @@ def as_bool(raw: str) -> bool:
     return raw.strip().lower() in ("1", "true", "si", "sì", "yes")
 
 
-DEFAULT_SOURCES = ["demo", "open_prices", "osm_stores", "carrefour", "lidl", "aldi", "eurospin", "penny"]
+DEFAULT_SOURCES = ["demo", "open_prices", "osm_stores", "carrefour", "lidl", "aldi", "eurospin", "penny", "easycoop"]
 
 
 def area(values: dict) -> tuple[float, float, float]:

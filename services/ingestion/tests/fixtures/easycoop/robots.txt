@@ -1,0 +1,11 @@
+User-agent: proximic
+Disallow: /rest/
+Disallow: /
+
+User-agent: *
+Disallow: /index.php/
+Disallow: /checkout/
+Disallow: /catalog/
+Disallow: /customer/
+Disallow: /*SID=
+Sitemap: {BASE}/sitemap/sitemap.xml
