@@ -5,8 +5,10 @@ import {
   BearerToken,
   callService,
   CurrentUser,
+  optNumber,
   PG_POOL,
   radiusKm,
+  ServiceOnly,
   reqNumber,
   reqUuid,
   serviceUrl,
@@ -46,6 +48,82 @@ export class PricingController {
     @Inject(PG_POOL) private readonly pool: Pool,
     @Inject(REDIS) private readonly redis: Redis,
   ) {}
+
+  /**
+   * Interno (pannello): prezzi correnti raggruppati per fonte e prodotto, per controllare i dati raccolti.
+   * Un listino d'insegna è salvato su ogni negozio della catena: qui diventa una riga con il numero di negozi.
+   */
+  @ServiceOnly()
+  @Get('internal/prices/collected')
+  async collected(@Query() q: any) {
+    const source = typeof q.source === 'string' ? q.source.slice(0, 80) : '';
+    const promoOnly = q.promo === '1' || q.promo === 'true';
+    const limit = optNumber(q.limit, 'limit', 1, 500) ?? 100;
+    const offset = optNumber(q.offset, 'offset', 0, 1_000_000) ?? 0;
+    const { rows } = await this.pool.query(
+      `WITH cur AS (
+         SELECT source, product_id, store_id, price, loyalty_only, promo_until, expires_on,
+                COALESCE(observed_on, valid_from) AS observed_on, fetched_at,
+                CASE WHEN promo_until < current_date THEN NULL ELSE promo_price END AS promo_price
+         FROM prices
+         WHERE valid_to IS NULL AND valid_from <= current_date
+           AND COALESCE(observed_on, valid_from) >= current_date - $1::int
+           AND (expires_on IS NULL OR expires_on >= current_date)
+           AND ($2 = '' OR source = $2))
+       SELECT source, product_id, price, promo_price, loyalty_only,
+              promo_until::text AS promo_until, expires_on::text AS expires_on,
+              max(observed_on)::text AS observed_on, max(fetched_at) AS fetched_at,
+              count(*)::int AS stores, (array_agg(store_id ORDER BY store_id))[1:3] AS sample_stores,
+              count(*) OVER ()::int AS total
+       FROM cur
+       WHERE NOT $3 OR promo_price IS NOT NULL
+       GROUP BY source, product_id, price, promo_price, loyalty_only, promo_until, expires_on
+       ORDER BY source, (promo_price IS NULL), max(fetched_at) DESC, product_id
+       LIMIT $4 OFFSET $5`,
+      [settings.num('pricing.priceMaxAgeDays'), source, promoOnly, limit, offset],
+    );
+    return {
+      total: rows[0]?.total ?? 0,
+      items: rows.map((r) => ({
+        source: r.source,
+        productId: r.product_id,
+        price: Number(r.price),
+        promoPrice: r.promo_price == null ? null : Number(r.promo_price),
+        loyaltyOnly: r.loyalty_only,
+        // Date come testo AAAA-MM-GG: niente spostamenti di fuso orario.
+        promoUntil: r.promo_until,
+        expiresOn: r.expires_on,
+        observedOn: r.observed_on,
+        fetchedAt: r.fetched_at,
+        stores: r.stores,
+        sampleStores: r.sample_stores,
+      })),
+    };
+  }
+
+  /** Interno (pannello): riepilogo per fonte (prodotti, negozi, offerte, ultimo giro). */
+  @ServiceOnly()
+  @Get('internal/prices/sources')
+  async sources() {
+    const { rows } = await this.pool.query(
+      `SELECT p.source, count(DISTINCT p.product_id)::int AS products, count(DISTINCT p.store_id)::int AS stores,
+              count(DISTINCT p.product_id) FILTER (WHERE p.promo_price IS NOT NULL
+                AND (p.promo_until IS NULL OR p.promo_until >= current_date))::int AS promos,
+              max(p.fetched_at) AS last_fetched,
+              (SELECT r.rows_upserted FROM scrape_runs r WHERE r.source = p.source ORDER BY r.started_at DESC LIMIT 1) AS last_rows
+       FROM prices p
+       WHERE p.valid_to IS NULL AND (p.expires_on IS NULL OR p.expires_on >= current_date)
+         AND COALESCE(p.observed_on, p.valid_from) >= current_date - $1::int
+       GROUP BY p.source ORDER BY p.source`,
+      [settings.num('pricing.priceMaxAgeDays')],
+    );
+    return {
+      items: rows.map((r) => ({
+        source: r.source, products: r.products, stores: r.stores, promos: r.promos,
+        lastFetched: r.last_fetched, lastRunRows: r.last_rows,
+      })),
+    };
+  }
 
   /** Confronto prezzi della lista. La blacklist è applicata dallo Store Service. */
   @Post('comparisons')

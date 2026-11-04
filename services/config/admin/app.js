@@ -310,6 +310,8 @@ function renderSidebar() {
     el('h2', { text: 'Parametri' }),
     ...state.groups.map((g) => link(`#/gruppo/${g.id}`, g.label, view === 'gruppo' && arg === g.id,
       state.settings.filter((s) => s.group === g.id && s.modified).length)),
+    el('h2', { text: 'Dati' }),
+    link('#/prezzi', 'Prezzi raccolti', view === 'prezzi'),
     el('h2', { text: 'Storico' }),
     link('#/registro', 'Registro modifiche', view === 'registro'));
 }
@@ -409,6 +411,120 @@ async function renderAudit() {
   }
 }
 
+
+// ---------- Prezzi raccolti ----------
+
+const SOURCE_NAMES = {
+  'web:carrefour': 'Carrefour', 'web:lidl': 'Lidl', 'web:aldi': 'Aldi', 'web:eurospin': 'Eurospin',
+  'web:penny': 'Penny', 'web:easycoop': 'EasyCoop (Coop Alleanza 3.0)', 'api:open-prices': 'Open Prices',
+};
+function sourceName(id) {
+  if (SOURCE_NAMES[id]) return SOURCE_NAMES[id];
+  if (id.startsWith('demo:')) return 'Listini dimostrativi';
+  if (id.startsWith('feed:')) return `Feed ${id.slice(5)}`;
+  return id;
+}
+const euro = (n) => n == null ? '' : `${Number(n).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} €`;
+const day = (iso) => iso ? new Date(`${iso.slice(0, 10)}T12:00:00`).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' }) : '';
+
+const collected = { source: '', promo: true, offset: 0, limit: 100, search: '' };
+
+async function renderCollected() {
+  const content = $('#content');
+  const summaryBox = el('div', {}, el('p', { class: 'empty', text: 'Caricamento delle fonti…' }));
+  const tableBox = el('div', {});
+  const sourceSelect = el('select', { id: 'f-source', 'aria-label': 'Fonte' }, el('option', { value: '', text: 'Tutte le fonti' }));
+  const promoBox = el('input', { type: 'checkbox', id: 'f-promo', checked: collected.promo });
+  const search = el('input', { type: 'search', id: 'f-search', placeholder: 'Filtra per prodotto, marca, EAN o negozio', value: collected.search });
+  const pager = el('div', { class: 'pager' });
+
+  content.replaceChildren(
+    pageHead('Prezzi raccolti', 'Quello che la raccolta notturna ha salvato, fonte per fonte, per controllare i dati. Un listino d\'insegna vale per tutti i negozi della catena nell\'area: qui è una riga sola con il numero di negozi.'),
+    summaryBox,
+    el('div', { class: 'section-head spaced' }, el('h2', { text: 'Prezzi' })),
+    el('div', { class: 'filters' },
+      sourceSelect,
+      el('label', { class: 'check', for: 'f-promo' }, promoBox, 'Solo offerte'),
+      search),
+    tableBox,
+    pager);
+
+  const loadTable = async () => {
+    tableBox.replaceChildren(el('p', { class: 'empty', text: 'Caricamento…' }));
+    const qs = new URLSearchParams({ limit: String(collected.limit), offset: String(collected.offset) });
+    if (collected.source) qs.set('source', collected.source);
+    if (collected.promo) qs.set('promo', '1');
+    try {
+      const data = await api(`/admin/collected?${qs}`);
+      drawTable(data);
+    } catch (err) {
+      tableBox.replaceChildren(el('p', { class: 'error', text: err.message }));
+    }
+  };
+
+  const drawTable = (data) => {
+    const needle = collected.search.trim().toLowerCase();
+    const rows = data.items.filter((i) => !needle || [i.product?.name, i.product?.brand, i.product?.ean, ...i.sampleStores.map((s) => `${s.name} ${s.chain ?? ''}`)]
+      .some((t) => (t || '').toLowerCase().includes(needle)));
+    if (!data.items.length) {
+      tableBox.replaceChildren(el('p', { class: 'empty', text: collected.promo ? 'Nessuna offerta in corso per questa scelta. Togli "Solo offerte" per vedere tutti i prezzi.' : 'Nessun prezzo raccolto per questa scelta.' }));
+    } else if (!rows.length) {
+      tableBox.replaceChildren(el('p', { class: 'empty', text: 'Nessuna riga di questa pagina corrisponde al filtro.' }));
+    } else {
+      tableBox.replaceChildren(el('table', { class: 'audit prices' },
+        el('thead', {}, el('tr', {}, ['Prodotto', 'Fonte', 'Prezzo', 'Validità', 'Negozi', 'Visto'].map((h) => el('th', { scope: 'col', text: h })))),
+        el('tbody', {}, rows.map((i) => el('tr', {},
+          el('td', {},
+            el('strong', { text: i.product?.name ?? i.productId }),
+            el('div', { class: 'sub', text: [i.product?.brand, i.product?.category, i.product?.ean ? `EAN ${i.product.ean}` : null].filter(Boolean).join(' · ') })),
+          el('td', { 'data-label': 'Fonte', text: sourceName(i.source) }),
+          el('td', { class: 'change', 'data-label': 'Prezzo' },
+            i.promoPrice != null
+              ? [el('s', { text: euro(i.price) }), ' ', el('strong', { text: euro(i.promoPrice) }), i.loyaltyOnly ? el('div', { class: 'sub', text: 'con carta fedeltà' }) : null]
+              : euro(i.price)),
+          el('td', { class: 'when', 'data-label': 'Validità', text: i.promoUntil ? `fino al ${day(i.promoUntil)}` : i.expiresOn ? `fino al ${day(i.expiresOn)}` : '' }),
+          el('td', { 'data-label': 'Negozi' },
+            el('span', { text: i.stores === 1 ? '1 negozio' : `${i.stores} negozi` }),
+            el('div', { class: 'sub', text: i.sampleStores.map((s) => s.name).join(', ') + (i.stores > i.sampleStores.length ? '…' : '') })),
+          el('td', { class: 'when', 'data-label': 'Visto il', text: day(i.observedOn) }))))));
+    }
+    const from = data.total ? collected.offset + 1 : 0;
+    const to = Math.min(collected.offset + collected.limit, data.total);
+    pager.replaceChildren(
+      el('span', { class: 'muted', text: `${from}–${to} di ${data.total.toLocaleString('it-IT')}` }),
+      el('button', { class: 'btn small', type: 'button', text: 'Precedenti', disabled: collected.offset === 0,
+        onclick: () => { collected.offset = Math.max(0, collected.offset - collected.limit); loadTable(); } }),
+      el('button', { class: 'btn small', type: 'button', text: 'Successivi', disabled: to >= data.total,
+        onclick: () => { collected.offset += collected.limit; loadTable(); } }));
+    lastData = data;
+  };
+  let lastData = null;
+
+  sourceSelect.addEventListener('change', () => { collected.source = sourceSelect.value; collected.offset = 0; loadTable(); });
+  promoBox.addEventListener('change', () => { collected.promo = promoBox.checked; collected.offset = 0; loadTable(); });
+  search.addEventListener('input', () => { collected.search = search.value; if (lastData) drawTable(lastData); });
+
+  try {
+    const { items } = await api('/admin/collected/sources');
+    for (const s of items) sourceSelect.append(el('option', { value: s.source, text: sourceName(s.source), selected: s.source === collected.source }));
+    summaryBox.replaceChildren(items.length
+      ? el('table', { class: 'audit' },
+        el('thead', {}, el('tr', {}, ['Fonte', 'Prodotti', 'Negozi', 'Offerte in corso', 'Ultimo aggiornamento'].map((h) => el('th', { scope: 'col', text: h })))),
+        el('tbody', {}, items.map((s) => el('tr', {},
+          el('td', {}, el('a', { href: '#/prezzi', text: sourceName(s.source), onclick: (e) => {
+            e.preventDefault(); collected.source = s.source; sourceSelect.value = s.source; collected.offset = 0; loadTable();
+          } })),
+          el('td', { 'data-label': 'Prodotti', text: s.products.toLocaleString('it-IT') }),
+          el('td', { 'data-label': 'Negozi', text: s.stores.toLocaleString('it-IT') }),
+          el('td', { 'data-label': 'Offerte in corso', text: s.promos.toLocaleString('it-IT') }),
+          el('td', { class: 'when', 'data-label': 'Aggiornato', text: s.lastFetched ? when(s.lastFetched) : '' })))))
+      : el('p', { class: 'empty', text: 'Nessun prezzo raccolto finora: la raccolta parte ogni notte, oppure avviala a mano (README, "Raccolta prezzi").' }));
+  } catch (err) {
+    summaryBox.replaceChildren(el('p', { class: 'error', text: err.message }));
+  }
+  loadTable();
+}
+
 let pendingFocus = null;
 function render() {
   renderSidebar();
@@ -417,6 +533,7 @@ function render() {
   if (q) renderSearch(q);
   else if (view === 'gruppo') renderGroup(arg);
   else if (view === 'registro') renderAudit();
+  else if (view === 'prezzi') renderCollected();
   else renderOverview();
   if (pendingFocus) {
     const row = document.getElementById(`row-${pendingFocus}`);

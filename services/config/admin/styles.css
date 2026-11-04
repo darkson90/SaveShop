@@ -265,3 +265,24 @@ textarea { min-height: 84px; resize: vertical; font-size: 14px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }
+
+/* Prezzi raccolti */
+.filters { display: flex; flex-wrap: wrap; gap: 10px 16px; align-items: center; margin-bottom: 12px; }
+.filters input[type=search] { flex: 1; min-width: 220px; }
+select {
+  font: inherit; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: var(--radius); padding: 7px 10px;
+}
+select:focus { border-color: var(--green); outline: none; box-shadow: 0 0 0 3px var(--green-soft); }
+.check { display: inline-flex; gap: 8px; align-items: center; font-size: 14px; font-weight: 600; cursor: pointer; }
+.check input { accent-color: var(--green); width: 16px; height: 16px; }
+.audit .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.prices td:first-child { max-width: 34ch; }
+.pager { display: flex; gap: 8px; align-items: center; justify-content: flex-end; margin-top: 14px; }
+.pager .muted { margin-right: auto; font-size: 14px; }
+.content a { color: var(--green); }
+.section-head.spaced { margin-top: 32px; }
+@media (max-width: 860px) {
+  .audit td[data-label]::before { content: attr(data-label) ": "; color: var(--muted); font-size: 12.5px; }
+  .audit td.when { white-space: normal; }
+}

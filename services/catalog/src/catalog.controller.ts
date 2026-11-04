@@ -75,6 +75,7 @@ function toProduct(r: any) {
     id: r.id,
     name: r.name,
     brand: r.brand,
+    ...(r.ean !== undefined ? { ean: r.ean } : {}),
     unit: r.unit,
     size: r.size == null ? null : Number(r.size),
     categoryId: r.category_id,

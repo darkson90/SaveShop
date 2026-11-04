@@ -474,6 +474,16 @@ if (process.env.INGESTION_CMD) {
   assert.equal(audit.items[0].changedBy, ADMIN.email);
   assert.ok(audit.items.some((i) => i.key === 'lists.inviteTtlHours' && i.newValue === 6 && i.wasDefault));
 
+  // Prezzi raccolti, per controllare le fonti.
+  const sourcesSeen = (await api('config', '/admin/collected/sources', admin)).items.map((x) => x.source);
+  assert.ok(sourcesSeen.includes('demo:listini-seed'));
+  const offers = await api('config', '/admin/collected?promo=1&limit=500', admin);
+  assert.ok(offers.total > 0 && offers.items.every((i) => i.promoPrice != null && i.product?.name && i.sampleStores[0]?.name));
+  if (process.env.INGESTION_CMD) {
+    const cf = await api('config', '/admin/collected?source=web:carrefour&promo=1', admin);
+    assert.equal(cf.items[0]?.stores, 2, 'listino Carrefour su 2 negozi in una riga');
+  }
+
   // Ripristino dei predefiniti.
   const restored = await api('config', '/admin/settings', { method: 'PATCH', body: { reset: ['lists.inviteTtlHours', 'auth.registrationOpen', 'app.maintenanceMessage'] }, ...admin });
   assert.ok(restored.settings.every((s) => !s.modified));

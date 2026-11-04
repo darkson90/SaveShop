@@ -214,6 +214,55 @@ export class ConfigController {
     };
   }
 
+  /**
+   * Prezzi raccolti, per controllare i dati delle fonti: dal Pricing, con nomi di prodotti e negozi
+   * presi da Catalogo e Store.
+   */
+  @AdminOnly()
+  @Get('admin/collected')
+  async collected(@Query() q: any) {
+    const params = new URLSearchParams();
+    if (typeof q.source === 'string' && q.source) params.set('source', q.source.slice(0, 80));
+    if (q.promo === '1') params.set('promo', '1');
+    params.set('limit', String(optNumber(q.limit, 'limit', 1, 500) ?? 100));
+    params.set('offset', String(optNumber(q.offset, 'offset', 0, 1_000_000) ?? 0));
+    const data = await callService<any>(serviceUrl.pricing(), `/internal/prices/collected?${params}`, { asService: true });
+    const productIds = [...new Set<string>(data.items.map((i: any) => i.productId))];
+    const storeIds = [...new Set<string>(data.items.flatMap((i: any) => i.sampleStores))];
+    const products = new Map<string, any>();
+    for (let i = 0; i < productIds.length; i += 200) {
+      const res = await callService<any>(serviceUrl.catalog(), '/internal/products/batch', {
+        method: 'POST', body: { ids: productIds.slice(i, i + 200) }, asService: true,
+      });
+      for (const p of res.items) products.set(p.id, p);
+    }
+    const stores = new Map<string, any>();
+    if (storeIds.length) {
+      const res = await callService<any>(serviceUrl.store(), '/internal/stores/batch', { method: 'POST', body: { ids: storeIds }, asService: true });
+      for (const st of res.items) stores.set(st.id, st);
+    }
+    return {
+      total: data.total,
+      items: data.items.map((i: any) => {
+        const p = products.get(i.productId);
+        return {
+          ...i,
+          product: p ? { name: p.name, brand: p.brand, ean: p.ean ?? null, category: p.category ?? null } : null,
+          sampleStores: i.sampleStores.map((id: string) => {
+            const st = stores.get(id);
+            return st ? { name: st.name, chain: st.chainName, address: st.address } : { name: id };
+          }),
+        };
+      }),
+    };
+  }
+
+  @AdminOnly()
+  @Get('admin/collected/sources')
+  async collectedSources() {
+    return callService<any>(serviceUrl.pricing(), '/internal/prices/sources', { asService: true });
+  }
+
   /** Stato dei servizi: /ready di ciascuno, con il tempo di risposta. */
   @AdminOnly()
   @Get('admin/status')

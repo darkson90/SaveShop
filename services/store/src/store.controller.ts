@@ -198,6 +198,22 @@ export class StoreController {
     return { items: rows.map((r) => ({ id: r.id, chainName: r.chain_name })) };
   }
 
+  /** Interno (pannello): nome, insegna e indirizzo di più punti vendita in una chiamata. */
+  @ServiceOnly()
+  @Post('internal/stores/batch')
+  @HttpCode(200)
+  async batch(@Body() body: any) {
+    const ids: string[] = Array.isArray(body?.ids) ? body.ids.slice(0, 500).map((id: unknown) => reqUuid(id, 'ids')) : [];
+    if (!ids.length) return { items: [] };
+    const { rows } = await this.pool.query(
+      `SELECT s.id, s.chain_id, c.name AS chain_name, s.name, s.address,
+              ST_Y(s.location::geometry) AS lat, ST_X(s.location::geometry) AS lng
+       FROM stores s JOIN chains c ON c.id = s.chain_id WHERE s.id = ANY($1)`,
+      [ids],
+    );
+    return { items: rows.map(toStore) };
+  }
+
   /** Interno (Ingestion): risolve il codice del punto vendita della fonte esterna. */
   @ServiceOnly()
   @Get('internal/stores/by-ref')

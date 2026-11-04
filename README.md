@@ -286,6 +286,9 @@ Una webapp di amministrazione per cambiare i parametri dell'app senza ridistribu
   ogni servizio rilegge i valori in pochi secondi (comunque ogni minuto). Valore effettivo: quello del
   pannello, altrimenti la variabile d'ambiente indicata, altrimenti il predefinito. Un valore riportato
   al predefinito toglie la modifica.
+- **Prezzi raccolti** (sezione Dati): riepilogo per fonte (prodotti, negozi, offerte in corso, ultimo
+  aggiornamento) ed elenco dei prezzi con prezzo pieno, prezzo scontato, scadenza, negozi a cui si applicano e
+  data dell'osservazione; filtri per fonte, solo offerte e testo (prodotto, marca, EAN, negozio).
 - **Sicurezza**: salvataggio tutto o niente con validazione sul server, registro di chi ha cambiato
   cosa (conservato due anni), pagina con Content-Security-Policy restrittiva e niente script esterni.
 - **L'app** legge `GET /api/v1/config/public` all'avvio: mostra l'avviso di manutenzione, chiede di
@@ -302,7 +305,7 @@ Una webapp di amministrazione per cambiare i parametri dell'app senza ridistribu
 - `GET /lists/{id}/live` (WebSocket) e `POST /lists/{id}/receipt`; `POST /lists/{id}/purchase` accetta `paidPrices`.
 - Interni per l'Ingestion: `POST /internal/stores/chain-members` (negozi di un'insegna nell'area).
 - `GET /config/public` (senza accesso) e, per il pannello, `POST /admin/login`, `GET` / `PATCH /admin/settings`,
-  `GET /admin/audit`, `GET /admin/status`.
+  `GET /admin/audit`, `GET /admin/status`, `GET /admin/collected`, `GET /admin/collected/sources`.
 
 ## Differenze dalle specifiche da conoscere
 
