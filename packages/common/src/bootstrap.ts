@@ -44,11 +44,13 @@ export interface BootstrapOptions {
   onReady?: (app: INestApplication, infra: Infra) => Promise<void>;
   /** Pulizie periodiche specifiche del servizio (SQL), oltre a outbox e processed_events. */
   maintenance?: string[];
+  /** SQL eseguito su ogni nuova connessione al database (es. soglie di pg_trgm). */
+  sessionSql?: string;
 }
 
 /** Avvio standard: migrazioni, connessione al bus, prefisso /api/v1, errori RFC 7807, /health e /ready. */
 export async function bootstrap(appModule: (infra: Infra) => Type<unknown> | DynamicModule, opts: BootstrapOptions) {
-  const pool = createPool();
+  const pool = createPool(opts.sessionSql);
   await runMigrations(pool, opts.migrationsDir ?? join(process.cwd(), 'migrations'));
   const bus = new EventBus();
   await bus.connect();

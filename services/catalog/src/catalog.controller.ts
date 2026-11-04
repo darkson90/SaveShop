@@ -35,9 +35,31 @@ const SEARCH_SQL = `
   ORDER BY score DESC, p.popularity DESC
   LIMIT $2`;
 
-/** Soglia minima per gli operatori trigram, allineata al filtro finale (0,3). */
-const THRESHOLDS = `SELECT set_config('pg_trgm.word_similarity_threshold', '0.3', true),
-                           set_config('pg_trgm.similarity_threshold', '0.3', true)`;
+/**
+ * Cache in memoria dei risultati di ricerca: i prefissi più digitati ("la", "lat", "mo"…) sono gli
+ * stessi per tutti e il catalogo cambia di rado (giro notturno dell'Ingestion). 5 minuti, 5000 voci,
+ * svuotata quando questa istanza crea prodotti nuovi; le altre repliche si allineano alla scadenza.
+ */
+const SEARCH_TTL_MS = 5 * 60 * 1000;
+const SEARCH_MAX_ENTRIES = 5000;
+const searchCache = new Map<string, { at: number; rows: any[] }>();
+
+function cacheGet(key: string): any[] | undefined {
+  const hit = searchCache.get(key);
+  if (!hit) return undefined;
+  if (Date.now() - hit.at > SEARCH_TTL_MS) {
+    searchCache.delete(key);
+    return undefined;
+  }
+  searchCache.delete(key); // riordina: in fondo alla Map ci sono le voci usate più di recente
+  searchCache.set(key, hit);
+  return hit.rows;
+}
+
+function cacheSet(key: string, rows: any[]): void {
+  if (searchCache.size >= SEARCH_MAX_ENTRIES) searchCache.delete(searchCache.keys().next().value!);
+  searchCache.set(key, { at: Date.now(), rows });
+}
 
 const DETAIL_SQL = `
   SELECT p.id, p.name, p.brand, p.ean, p.unit, p.size, p.category_id, c.name AS category_name
@@ -64,22 +86,18 @@ function toProduct(r: any) {
 export class CatalogController {
   constructor(@Inject(PG_POOL) private readonly pool: Pool) {}
 
-  /** Esegue più ricerche in una transazione, con le soglie trigram impostate solo per questa. */
+  /** Ricerche con cache; le soglie trigram sono impostate sulla connessione (sessionSql in main.ts). */
   private async search(terms: string[], limit: number): Promise<any[][]> {
-    const client = await this.pool.connect();
-    try {
-      await client.query('BEGIN');
-      await client.query(THRESHOLDS);
-      const results: any[][] = [];
-      for (const term of terms) results.push((await client.query(SEARCH_SQL, [term, limit])).rows);
-      await client.query('COMMIT');
-      return results;
-    } catch (err) {
-      await client.query('ROLLBACK').catch(() => undefined);
-      throw err;
-    } finally {
-      client.release();
-    }
+    return Promise.all(
+      terms.map(async (term) => {
+        const key = `${limit}:${term.toLowerCase()}`;
+        const cached = cacheGet(key);
+        if (cached) return cached;
+        const { rows } = await this.pool.query(SEARCH_SQL, [term, limit]);
+        cacheSet(key, rows);
+        return rows;
+      }),
+    );
   }
 
   @Get('products/suggest')
@@ -167,6 +185,7 @@ export class CatalogController {
             categoryId.get(category) ?? categoryId.get('Dispensa'), packageSize(raw.quantity, raw.quantityUnit)],
         );
         if (inserted.rows[0]) {
+          searchCache.clear(); // un prodotto nuovo deve comparire subito nelle ricerche
           const id = inserted.rows[0].id;
           await addToOutbox(client, Events.ProductCreated, {
             productId: id, name, unit: 'pz', categoryId: categoryId.get(category), categoryName: category,

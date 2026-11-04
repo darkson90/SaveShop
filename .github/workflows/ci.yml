@@ -77,6 +77,11 @@ jobs:
           INGESTION_CMD="cd services/ingestion && SERVICE_TOKEN=dev-only-service-token CATALOG_URL=http://localhost:3004 STORE_URL=http://localhost:3003 AMQP_URL=amqp://guest:guest@localhost:5672 INGESTION_MODE=once python -m ingestion" \
             npm run e2e
 
+      - name: Test di latenza (informativo)
+        # Sui runner condivisi i tempi variano: il risultato si legge nel log e non blocca la CI.
+        continue-on-error: true
+        run: LATENCY_ROUNDS=150 npm run latency
+
       - name: Log dei servizi
         if: failure()
         run: tail -n 80 .logs/*.log

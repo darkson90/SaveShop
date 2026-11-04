@@ -3,8 +3,19 @@ import { join } from 'node:path';
 import { Pool, PoolClient } from 'pg';
 import { env } from './config';
 
-export function createPool(): Pool {
-  return new Pool({ connectionString: env('DATABASE_URL'), max: 10 });
+/**
+ * Pool PostgreSQL del servizio. `sessionSql` viene eseguito su ogni nuova connessione (impostazioni
+ * di sessione valide per tutte le query del servizio, senza aprire una transazione a ogni richiesta).
+ */
+export function createPool(sessionSql?: string): Pool {
+  const pool = new Pool({ connectionString: env('DATABASE_URL'), max: 10 });
+  if (sessionSql) {
+    // pg accoda le query sullo stesso client: questa precede sempre la prima query applicativa.
+    pool.on('connect', (client) => {
+      client.query(sessionSql).catch((err) => console.error('[db] impostazioni di sessione fallite:', err.message));
+    });
+  }
+  return pool;
 }
 
 /** Tabelle comuni a ogni servizio: outbox (eventi in uscita) e inbox (idempotenza dei consumer). */

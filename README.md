@@ -182,12 +182,35 @@ prezzi completi, con il consenso di chi li pubblica.
   non entra più nei confronti; per Open Prices conta la data dello scontrino o del cartellino.
 - **Metriche**: la spesa per categoria è aggiornata riga per riga a ogni acquisto, invece di ricalcolare
   ogni volta una vista su tutto lo storico.
-- **Ricerca prodotti**: usa gli indici trigram anche con un catalogo grande; gli scontrini vengono
-  abbinati con una sola chiamata al catalogo.
+- **Ricerca prodotti**: usa gli indici trigram anche con un catalogo grande, con le soglie impostate
+  sulla connessione (una query per ricerca, non una transazione) e una cache in memoria di 5 minuti
+  per i prefissi più digitati; gli scontrini vengono abbinati con una sola chiamata al catalogo.
 - **Limiti del gateway**: 300 richieste al minuto per utente sulle API, 20 al minuto per IP su login e
   registrazione, 120 al minuto per IP sulle pagine d'invito.
 - **Pulizia automatica** ogni ora: eventi già pubblicati, token scaduti, inviti scaduti, storico prezzi
   oltre 180 giorni, notifiche oltre 60 giorni.
+
+## Test di latenza
+
+`npm run latency` (servizi avviati) misura p50, p95 e p99 delle chiamate dell'app, prima una alla volta
+e poi con 20 richieste contemporanee, e li confronta con gli obiettivi delle specifiche
+(autocompletamento p95 < 80 ms, confronto di 50 articoli p95 < 1 s). Opzioni: `LATENCY_ROUNDS`,
+`LATENCY_CONCURRENCY`, `GATEWAY_URL` (attraverso il gateway), `LATENCY_JSON` (risultati in un file).
+Gira anche in CI, solo come informazione.
+
+Misura del 4 novembre 2026, tutto su una macchina con 2 vCPU (8 servizi, PostgreSQL, RabbitMQ, Redis),
+senza gateway; tempi in millisecondi:
+
+| Chiamata | p95 singola | p95 con 20 contemporanee |
+| --- | --- | --- |
+| Autocompletamento (prefissi comuni, in cache) | 2,7 | 25,7 |
+| Autocompletamento (sempre dal database) | 4,8 | 90,2 |
+| Aggiunta rapida di un articolo | 11,3 | 99,3 |
+| Lettura scontrino | 10,1 | – |
+| Confronto 50 articoli, senza cache | 14,9 | 497,6 |
+| Confronto 50 articoli, in cache | 10,8 | – |
+| Metriche del profilo | 2,6 | 35,1 |
+| Login (argon2, lento di proposito) | 16,3 | – |
 
 ## Endpoint aggiuntivi rispetto alle specifiche
 
