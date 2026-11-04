@@ -1,0 +1,9 @@
+User-agent: *
+Disallow: /tools
+Disallow: /*?q=
+Allow: /*?page=*
+
+Sitemap: {BASE}/sitemap.xml
+Sitemap: {BASE}/sitemap_categories.xml
+Sitemap: {BASE}/sitemap_products.xml
+Sitemap: {BASE}/sitemap_stores.xml

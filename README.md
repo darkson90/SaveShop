@@ -167,32 +167,40 @@ soglia il prezzo viene scartato.
 
 ## Prezzi dai siti dei supermercati (scraping)
 
-L'Ingestion legge i siti delle catene con prezzi pubblici. Oggi è attiva **Carrefour** (fonte `carrefour`,
-attiva di default con `demo` e `open_prices`); gli strumenti in `services/ingestion/ingestion/scraping/`
-servono anche per aggiungere altre catene.
+Il lato server rilegge ogni 24 ore tutte le fonti: CronJob notturno alle 02:00 in Kubernetes, ciclo di 24
+ore (`INGESTION_INTERVAL_HOURS`) con Docker Compose. Ogni sito è letto con le stesse regole (strumenti in
+`services/ingestion/ingestion/scraping/`):
 
-- **Cosa legge**: dalla sitemap dei negozi i punti vendita Carrefour con le coordinate (creati nello
-  Store Service, insegna per formato: Iper, Market, Express); dalla sitemap dei prodotti le pagine
-  prodotto, da cui prende codice a barre, nome, marca, confezione, prezzo, prezzo barrato delle
-  promozioni e categoria. Restano fuori i prodotti non di spesa e i codici a peso variabile.
-- **Prezzi d'insegna**: sono i prezzi della spesa online, uguali in tutta Italia. Si applicano ai negozi
-  Carrefour dell'area di raccolta, per i formati scelti nel pannello. Nei negozi possono differire,
-  soprattutto negli Express.
-- **Rispetto del sito**: robots.txt letto e rispettato (ricerca e carrello sono vietati e non li usiamo),
-  User-Agent `SaveShopBot` con il link al progetto, una pagina alla volta con pausa (1,5 s, o il
-  Crawl-delay del sito se più lungo), stop su 403 o dopo troppi errori di fila, tetto di pagine per notte.
-- **Rotazione**: con 1.500 pagine per notte (circa 40 minuti) metà va ai prodotti già nel catalogo e metà
-  agli altri, con una finestra diversa ogni giorno; i circa 24.000 prodotti si coprono in un paio di settimane.
-- **Dal pannello** (sezione Raccolta prezzi): fonti attive, area di raccolta, pagine per notte, pausa,
-  aggiunta di prodotti nuovi al catalogo, formati Carrefour a cui applicare i prezzi.
-- **Verifiche**: struttura del sito controllata il 4 novembre 2026 su pagine reali (sitemap, JSON-LD,
-  prezzi barrati, categorie, pagine dei negozi). I test usano copie ridotte di quelle pagine
-  (`services/ingestion/tests/fixtures/carrefour`); se il sito cambia, il giro registra 0 prezzi nel log
-  invece di salvare dati sbagliati.
-- **Altre catene valutate**: Conad mostra i prezzi solo dopo aver scelto un punto vendita (i negozi sono
-  indipendenti), Esselunga non espone il codice a barre; richiedono un lavoro a parte.
-- **Termini d'uso**: prima di andare in produzione conviene leggere le condizioni del sito Carrefour e,
-  se possibile, chiedere un accordo o un feed: è la strada più solida.
+- robots.txt letto e rispettato; niente pagine o API che richiedono login, sessione o un punto vendita scelto;
+- User-Agent `SaveShopBot` con il link al progetto, una richiesta alla volta per sito con pausa (1,5 s, o il
+  Crawl-delay del sito se più lungo), stop su 403 o dopo troppi errori di fila, tetto di pagine per notte e per sito.
+
+Catene verificate il 4 novembre 2026 sui siti reali:
+
+| Catena | Cosa si legge | Prezzi | Codice a barre |
+| --- | --- | --- | --- |
+| Carrefour | ~24.000 pagine prodotto + ~1.000 negozi | listino online nazionale, promo con prezzo barrato | sì |
+| Lidl | ~500 pagine prodotto (assortimento e offerte) | nazionali | spesso (gtin13) |
+| Aldi | ~800 pagine prodotto (assortimento fisso) | nazionali | no: abbinamento per nome |
+| Eurospin | elenco offerte in JSON (~60) | offerte nazionali con scadenza | no: abbinamento per nome |
+| Penny | pagine "Tutte le offerte" (~90) | offerte con validità, prezzi con PENNYCard | no: abbinamento per nome |
+
+- **Negozi**: i listini sono nazionali e si applicano ai negozi dell'insegna nell'area di raccolta, presi da
+  OpenStreetMap (Carrefour dal proprio sito, con i formati scelti nel pannello).
+- **Offerte a tempo**: la data di fine viene salvata; scaduta l'offerta torna il prezzo pieno, e le voci delle
+  fonti di sole offerte (Eurospin senza prezzo barrato) spariscono dai confronti.
+- **Abbinamento per nome**: marca, nome e formato vengono cercati nel catalogo; sotto la soglia del pannello
+  (`scraping.minNameMatch`, 0,6) il prezzo è scartato.
+- **Catene escluse e perché**: Esselunga (prezzi solo in sessione; le API sono in percorsi vietati dal
+  robots.txt), Coop e Tigros (prezzi solo dopo aver scelto l'indirizzo di consegna; Tigros vieta le API nel
+  robots.txt), Conad e Despar (prezzi e volantini per singolo punto vendita, dopo averlo scelto), MD e Pam
+  (nessun listino o offerta in formato leggibile, solo volantini da sfogliare). Per queste resta Open Prices,
+  e un accordo o un feed con la catena (formato in `docs/feed-format.md`) è la strada per averle.
+- **Test**: copie ridotte delle pagine reali in `services/ingestion/tests/fixtures/<catena>` (la pagina del
+  trapano Lidl è inventata, per provare lo scarto dei prodotti non alimentari). Se un sito cambia struttura il
+  giro registra 0 prezzi per quella catena nel log invece di salvare dati sbagliati.
+- **Termini d'uso**: prima di andare in produzione conviene leggere le condizioni dei siti e, dove possibile,
+  chiedere un accordo o un feed.
 
 ## Listini dei negozi partner
 
@@ -322,7 +330,7 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
   il test end-to-end passano. Il percorso: registrazione → lista → blacklist → confronto → spesa →
   metriche → offerte notificate senza doppioni → endpoint interni protetti → lista condivisa con un
   secondo utente e aggiornamento via WebSocket → chiusura con lo scontrino → uscita del membro →
-  prezzi Open Prices (con un server che simula l'API) → feed partner → supermercati OpenStreetMap (Overpass simulato) → sito Carrefour simulato (negozi, prodotti, promo, robots.txt) → pannello parametri (accesso
+  prezzi Open Prices (con un server che simula l'API) → feed partner → supermercati OpenStreetMap (Overpass simulato) → offerte Penny abbinate per nome → sito Carrefour simulato (negozi, prodotti, promo, robots.txt) → pannello parametri (accesso
   negato ai non admin, modifica applicata subito dal List Service, registrazioni chiuse e riaperte,
   registro, ripristino) → cancellazione account.
   Il test copre anche link d'invito, pagina di atterraggio e file `.well-known`, più i casi limite

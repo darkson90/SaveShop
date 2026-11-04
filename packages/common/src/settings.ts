@@ -104,12 +104,16 @@ export const SETTINGS: SettingDef[] = [
     description: 'Dopo questo tempo senza aprire l\'app bisogna accedere di nuovo.', services: ['auth'] },
 
   // Raccolta prezzi
-  { key: 'ingestion.sources', group: 'ingestion', label: 'Fonti attive', type: 'choices', default: ['demo', 'open_prices', 'osm_stores', 'carrefour'], env: 'INGESTION_SOURCES',
+  { key: 'ingestion.sources', group: 'ingestion', label: 'Fonti attive', type: 'choices', default: ['demo', 'open_prices', 'osm_stores', 'carrefour', 'lidl', 'aldi', 'eurospin', 'penny'], env: 'INGESTION_SOURCES',
     options: [
       { value: 'demo', label: 'Listini dimostrativi' },
       { value: 'open_prices', label: 'Open Prices (prezzi reali, ODbL)' },
       { value: 'osm_stores', label: 'Supermercati d\'Italia da OpenStreetMap (solo negozi, ODbL)' },
       { value: 'carrefour', label: 'Sito Carrefour (negozi e prezzi della spesa online)' },
+      { value: 'lidl', label: 'Sito Lidl (prezzi nazionali, spesso con codice a barre)' },
+      { value: 'aldi', label: 'Sito Aldi (assortimento con prezzi nazionali, abbinato per nome)' },
+      { value: 'eurospin', label: 'Sito Eurospin (offerte nazionali, abbinate per nome)' },
+      { value: 'penny', label: 'Sito Penny (offerte della settimana, anche con PENNYCard)' },
       { value: 'feeds', label: 'Feed dei negozi partner' },
     ],
     description: 'Usate dal giro notturno successivo. In produzione disattiva i listini dimostrativi.', services: ['ingestion'] },

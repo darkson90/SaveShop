@@ -25,11 +25,14 @@ const MODES = ['single_store', 'two_stores', 'per_item'] as const;
  * finita, negozio sparito dal feed, segnalazione vecchia) smette di comparire nei confronti.
  */
 const CURRENT_PRICES_SQL = `
-  SELECT store_id, product_id, price, promo_price, loyalty_only, COALESCE(observed_on, valid_from) AS observed_on
+  SELECT store_id, product_id, price,
+         CASE WHEN promo_until < current_date THEN NULL ELSE promo_price END AS promo_price,
+         loyalty_only, COALESCE(observed_on, valid_from) AS observed_on
   FROM prices
   WHERE product_id = ANY($1) AND store_id = ANY($2)
     AND valid_to IS NULL AND valid_from <= current_date
-    AND COALESCE(observed_on, valid_from) >= current_date - $3::int`;
+    AND COALESCE(observed_on, valid_from) >= current_date - $3::int
+    AND (expires_on IS NULL OR expires_on >= current_date)`;
 
 /** Cambia a ogni aggiornamento dei listini: fa parte della chiave di cache, niente scansioni KEYS. */
 export const PRICES_VERSION_KEY = 'prices:version';

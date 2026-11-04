@@ -1,24 +1,29 @@
-"""Sito Carrefour simulato con pagine registrate (tests/fixtures/carrefour), per unit test ed end-to-end."""
+"""Siti dei supermercati simulati con pagine registrate (tests/fixtures/<catena>), per unit test ed end-to-end."""
 import json
 from pathlib import Path
 from urllib.parse import urlparse
 
 from ingestion.scraping.http import Response
 
-FIXTURES = Path(__file__).parent / "fixtures" / "carrefour"
-ROUTES = json.loads((FIXTURES / "routes.json").read_text())
+ROOT = Path(__file__).parent / "fixtures"
+FIXTURES = ROOT / "carrefour"
 
 
-def page(path: str, base: str) -> bytes | None:
-    name = ROUTES.get(path)
-    return (FIXTURES / name).read_text().replace("{BASE}", base).encode() if name else None
+def routes(site: str) -> dict:
+    return json.loads((ROOT / site / "routes.json").read_text())
+
+
+def page(path: str, base: str, site: str = "carrefour") -> bytes | None:
+    name = routes(site).get(path)
+    return (ROOT / site / name).read_text().replace("{BASE}", base).encode() if name else None
 
 
 class FakeSite:
     """Trasporto per PoliteFetcher: risponde dalle fixture e registra le richieste ricevute."""
 
-    def __init__(self, base: str = "https://www.carrefour.it", overrides: dict | None = None):
+    def __init__(self, base: str = "https://www.carrefour.it", overrides: dict | None = None, site: str = "carrefour"):
         self.base = base
+        self.site = site
         self.overrides = overrides or {}  # percorso -> (stato, corpo, intestazioni)
         self.requests: list[str] = []
 
@@ -29,5 +34,5 @@ class FakeSite:
         if path in self.overrides:
             status, body, hdrs = self.overrides[path]
             return Response(status, body, hdrs)
-        body = page(path, self.base)
+        body = page(path, self.base, self.site)
         return Response(200, body, {}) if body is not None else Response(404, b"", {})

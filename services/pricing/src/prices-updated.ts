@@ -14,6 +14,10 @@ export interface PricesUpdatedPayload {
     loyaltyOnly?: boolean;
     /** Giorno dell'osservazione (YYYY-MM-DD); se manca vale validFrom. */
     observedOn?: string | null;
+    /** Ultimo giorno del prezzo scontato (offerte a tempo). */
+    promoUntil?: string | null;
+    /** Ultimo giorno di validità della riga (fonti che pubblicano solo offerte). */
+    expiresOn?: string | null;
   }>;
 }
 
@@ -37,14 +41,16 @@ export async function applyPricesUpdated(client: PoolClient, p: PricesUpdatedPay
     [storeIds, productIds, p.validFrom],
   );
   await client.query(
-    `INSERT INTO prices (store_id, product_id, price, promo_price, loyalty_only, observed_on, valid_from, source, fetched_at)
+    `INSERT INTO prices (store_id, product_id, price, promo_price, loyalty_only, observed_on, valid_from, source, fetched_at,
+                         promo_until, expires_on)
      SELECT u.store_id, u.product_id, u.price, u.promo_price, u.loyalty_only, COALESCE(u.observed_on, $6::date),
-            $6::date, $7::text, $8::timestamptz
-     FROM unnest($1::uuid[], $2::uuid[], $3::numeric[], $4::numeric[], $5::boolean[], $9::date[])
-          AS u(store_id, product_id, price, promo_price, loyalty_only, observed_on)
+            $6::date, $7::text, $8::timestamptz, u.promo_until, u.expires_on
+     FROM unnest($1::uuid[], $2::uuid[], $3::numeric[], $4::numeric[], $5::boolean[], $9::date[], $10::date[], $11::date[])
+          AS u(store_id, product_id, price, promo_price, loyalty_only, observed_on, promo_until, expires_on)
      ON CONFLICT (store_id, product_id, valid_from) DO UPDATE
        SET price = EXCLUDED.price, promo_price = EXCLUDED.promo_price, loyalty_only = EXCLUDED.loyalty_only,
-           observed_on = EXCLUDED.observed_on, fetched_at = EXCLUDED.fetched_at, valid_to = NULL`,
+           observed_on = EXCLUDED.observed_on, fetched_at = EXCLUDED.fetched_at, valid_to = NULL,
+           promo_until = EXCLUDED.promo_until, expires_on = EXCLUDED.expires_on`,
     [
       storeIds,
       productIds,
@@ -55,6 +61,8 @@ export async function applyPricesUpdated(client: PoolClient, p: PricesUpdatedPay
       p.source,
       p.finishedAt,
       unique.map((r) => r.observedOn ?? null),
+      unique.map((r) => r.promoUntil ?? null),
+      unique.map((r) => r.expiresOn ?? null),
     ],
   );
   await client.query(

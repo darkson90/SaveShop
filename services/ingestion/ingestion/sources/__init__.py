@@ -34,6 +34,8 @@ class RawPrice:
     store: StoreInfo | None = None      # presenti solo per le fonti che possono creare negozi/prodotti
     product: ProductInfo | None = None
     observed_on: str | None = None      # YYYY-MM-DD dell'osservazione; None = oggi (listini e feed)
+    promo_until: str | None = None      # YYYY-MM-DD: ultimo giorno del prezzo scontato
+    expires_on: str | None = None       # YYYY-MM-DD: ultimo giorno della riga (fonti di sole offerte)
 
 
 class Source(Protocol):

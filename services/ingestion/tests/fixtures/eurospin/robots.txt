@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+Disallow: /error/
+Disallow: /area-riservata/
+Disallow: /leaflet/
+Disallow: /404/
+Disallow: /search-results/
+
+Sitemap: https://www.eurospin.com/sitemap-index.xml

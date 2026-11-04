@@ -17,6 +17,7 @@ from .sources.feeds import FeedSource
 from .sources.open_prices import OpenPricesSource
 from .sources.osm_stores import OsmStoresSource
 from .sources.carrefour import FORMATS as CARREFOUR_FORMATS
+from .sources.chains import CHAIN_SOURCES
 
 AMQP_URL = os.environ.get("AMQP_URL", "amqp://guest:guest@rabbitmq:5672")
 CATALOG_URL = os.environ.get("CATALOG_URL", "http://catalog:3000")
@@ -57,6 +58,9 @@ def as_bool(raw: str) -> bool:
     return raw.strip().lower() in ("1", "true", "si", "sì", "yes")
 
 
+DEFAULT_SOURCES = ["demo", "open_prices", "osm_stores", "carrefour", "lidl", "aldi", "eurospin", "penny"]
+
+
 def area(values: dict) -> tuple[float, float, float]:
     """Area di raccolta (centro e raggio): Open Prices e listini d'insegna dei siti dei supermercati."""
     return (
@@ -66,12 +70,20 @@ def area(values: dict) -> tuple[float, float, float]:
     )
 
 
+def polite_fetcher(values: dict) -> PoliteFetcher:
+    """Un fetcher per sito: pausa e tetto di pagine valgono per ciascuna catena."""
+    return PoliteFetcher(
+        delay_seconds=float(setting(values, "scraping.delaySeconds", "SCRAPING_DELAY_SECONDS", 1.5, float)),
+        max_requests=int(setting(values, "scraping.maxRequestsPerRun", "SCRAPING_MAX_REQUESTS", 1500, int)),
+    )
+
+
 def build_sources(values: dict | None = None) -> list[Source]:
-    """Fonti attive (parametro ingestion.sources): demo, open_prices, feeds, carrefour."""
+    """Fonti attive (parametro ingestion.sources): vedi DEFAULT_SOURCES, più "feeds"."""
     values = panel_settings() if values is None else values
     lat, lon, radius = area(values)
     sources: list[Source] = []
-    active = setting(values, "ingestion.sources", "INGESTION_SOURCES", ["demo", "open_prices", "osm_stores", "carrefour"], as_list)
+    active = setting(values, "ingestion.sources", "INGESTION_SOURCES", DEFAULT_SOURCES, as_list)
     for name in active:
         if name == "demo":
             sources.append(DemoSource())
@@ -92,13 +104,11 @@ def build_sources(values: dict | None = None) -> list[Source]:
                 # Carrefour crea i suoi negozi dal proprio sito, con i codici del sito: niente doppioni.
                 skip_chains=CARREFOUR_FORMATS.values() if "carrefour" in active else (),
             ))
+        elif name in CHAIN_SOURCES:
+            sources.append(CHAIN_SOURCES[name](polite_fetcher(values)))
         elif name == "carrefour":
-            fetcher = PoliteFetcher(
-                delay_seconds=float(setting(values, "scraping.delaySeconds", "SCRAPING_DELAY_SECONDS", 1.5, float)),
-                max_requests=int(setting(values, "scraping.maxRequestsPerRun", "SCRAPING_MAX_REQUESTS", 1500, int)),
-            )
             sources.append(CarrefourSource(
-                fetcher,
+                polite_fetcher(values),
                 formats=setting(values, "scraping.carrefourFormats", "CARREFOUR_FORMATS", ["iper", "market", "express", "altri"], as_list),
                 create_products=bool(setting(values, "scraping.createProducts", "SCRAPING_CREATE_PRODUCTS", True, as_bool)),
             ))
@@ -216,6 +226,8 @@ def normalize(
                 "promoPrice": round(r.promo_price, 2) if r.promo_price else None,
                 "loyaltyOnly": r.loyalty_only,
                 "observedOn": r.observed_on,
+                "promoUntil": r.promo_until,
+                "expiresOn": r.expires_on,
             })
     return rows, skipped
 

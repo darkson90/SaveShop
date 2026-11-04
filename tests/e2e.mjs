@@ -344,6 +344,7 @@ if (process.env.INGESTION_CMD) {
       res.end(JSON.stringify({ elements: [
         { type: 'node', id: 990000001, lat: 46.4189, lon: 12.2439, tags: { shop: 'supermarket', brand: 'CONAD', name: 'Conad Vodo', 'addr:city': 'Vodo di Cadore' } },
         { type: 'way', id: 990000002, center: { lat: 46.4171, lon: 12.2502 }, tags: { shop: 'supermarket', brand: 'Eurospin', name: 'Eurospin' } },
+        { type: 'node', id: 990000003, lat: 46.4160, lon: 12.2420, tags: { shop: 'supermarket', brand: 'PENNY', name: 'Penny Market' } },
         { type: 'node', id: 999000111, lat: 46.4195, lon: 12.2465, tags: { shop: 'supermarket', brand: 'Kanguro', name: 'Market Test Vodo' } },
       ] }));
     });
@@ -360,6 +361,31 @@ if (process.env.INGESTION_CMD) {
   assert.ok(osmNear.some((s) => s.chainName === 'Eurospin'));
   assert.equal(osmNear.filter((s) => s.name === 'Market Test Vodo').length, 1, 'stesso negozio di Open Prices: nessun doppione');
   step(`OpenStreetMap: negozi di tutte le insegne (es. "${conad.name}", insegna ${conad.chainName}), senza doppioni con Open Prices`);
+
+  // Offerte Penny (pagina registrata, senza codice a barre): abbinate per nome e applicate ai negozi Penny.
+  const pennyDir = 'services/ingestion/tests/fixtures/penny';
+  const pennyRoutes = JSON.parse(readFileSync(`${pennyDir}/routes.json`, 'utf8'));
+  const pennySite = createServer((req, res) => {
+    const file = pennyRoutes[req.url.split('?')[0]];
+    if (!file) { res.statusCode = 404; return res.end(); }
+    res.end(readFileSync(`${pennyDir}/${file}`, 'utf8').replaceAll('{BASE}', 'http://localhost:3996'));
+  });
+  await new Promise((r) => pennySite.listen(3996, r));
+  const pennyRun = await promisify(exec)(process.env.INGESTION_CMD, {
+    env: { ...process.env, INGESTION_SOURCES: 'penny', PENNY_URL: 'http://localhost:3996', SCRAPING_DELAY_SECONDS: '0',
+      SCRAPING_MIN_NAME_MATCH: '0.3', OPEN_PRICES_LAT: '46.42', OPEN_PRICES_LON: '12.25' },
+  });
+  process.stdout.write(pennyRun.stdout);
+  pennySite.close();
+  const pennyStore = (await api('store', `/stores?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=5`)).items.find((s) => s.chainName === 'Penny');
+  const spaghettiId = (await api('catalog', '/products/suggest?q=spaghetti')).items.find((p) => p.name === 'Spaghetti 500 g').id;
+  const pennyPrice = await eventually(async () => {
+    const r = await api('pricing', `/products/${spaghettiId}/prices?lat=${HOME.lat}&lng=${HOME.lng}&radius_km=5`);
+    const p = r.items.find((x) => x.storeId === pennyStore.id);
+    assert.ok(p, 'offerta Penny abbinata per nome');
+    return p;
+  });
+  step(`offerte Penny: "Spaghetti grossi N.5 Rummo" abbinato a "Spaghetti 500 g", ${pennyPrice.unitPrice} € da ${pennyStore.name}`);
 
   // Sito Carrefour (pagine registrate da carrefour.it servite in locale): negozi, prodotti, promo.
   const site = 'services/ingestion/tests/fixtures/carrefour';

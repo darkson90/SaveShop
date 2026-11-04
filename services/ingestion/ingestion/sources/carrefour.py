@@ -23,6 +23,7 @@ from html import unescape
 from typing import Iterable
 
 from ..scraping import BudgetExhausted, PoliteFetcher, SiteUnavailable, json_ld_products, normalize_gtin, parse_sitemap
+from ..scraping.categories import map_category  # noqa: F401 (usata anche dai test)
 from ..scraping.jsonld import brand_name, gtin_candidates, offer_price, parse_price
 from . import ProductInfo, RawPrice, StoreInfo
 
@@ -37,21 +38,6 @@ FORMATS = {
     "altri": "Carrefour",
 }
 
-# Categorie del sito (primo livello, es. "Acqua, succhi e bibite") -> categorie del catalogo. Quelle assenti
-# (giocattoli, tessile, giardino, "Articoli per la casa e per la tua auto"...) non sono spesa e vengono saltate.
-# Il campo item_type della pagina non aiuta: vale "food" anche per un nastro adesivo.
-CATEGORIES = [
-    (("uova", "latte", "latticini", "formaggi", "yogurt"), "Latticini"),
-    (("pane", "snack salati", "panetteria", "sostitutivi"), "Panetteria"),
-    (("frutta", "verdura"), "Frutta e verdura"),
-    (("carne", "pesce", "gastronomia", "salumi", "hamburger"), "Carne e pesce"),
-    (("surgelati", "gelati"), "Surgelati"),
-    (("acqua", "analcolici", "bevande", "birra", "vino", "liquori"), "Bevande"),
-    (("cura della casa", "cura della persona", "igiene", "animali", "prima infanzia", "salute"), "Casa e igiene"),
-    (("dolci", "colazione", "pasta", "riso", "farina", "condimenti", "conserve", "dispensa", "sfusi",
-      "biologic", "stili alimentari"), "Dispensa"),
-]
-
 _STORE_URL = re.compile(r"/punti-vendita/[^/]+-(\d+)\.html$")
 _PRODUCT_URL = re.compile(r"/p/[^/]+/(\d{8,14})\.html$")
 _LAT = re.compile(r'data-option-lat="(-?\d+(?:\.\d+)?)"')
@@ -62,16 +48,6 @@ _STRIKE = re.compile(r'class="strike-through list".*?content="(\d+(?:\.\d+)?)"',
 _SALE = re.compile(r'class="value discounted[^"]*"\s+content="(\d+(?:\.\d+)?)"')
 _CATEGORY = re.compile(r'"item_category":"([^"]*)"')
 _PACKAGE = re.compile(r"/\s*(\d+(?:[.,]\d+)?)\s*(g|kg|ml|cl|l|lt)\b", re.I)
-
-
-def map_category(site_category: str | None) -> str | None:
-    text = (site_category or "").lower()
-    if not text:
-        return None
-    for words, category in CATEGORIES:
-        if any(w in text for w in words):
-            return category
-    return None
 
 
 def store_format(title: str) -> str:
