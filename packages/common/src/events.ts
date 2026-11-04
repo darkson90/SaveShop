@@ -41,6 +41,8 @@ export class EventBus {
   /** Canale con conferme del broker: un evento è "pubblicato" solo quando RabbitMQ lo ha preso in carico. */
   private confirmChannel?: amqp.ConfirmChannel;
   private closing = false;
+  /** eventId restituiti dal broker perché nessuna coda era legata a quel tipo di evento. */
+  private returned = new Set<string>();
 
   constructor(private readonly url = env('AMQP_URL', 'amqp://guest:guest@rabbitmq:5672')) {}
 
@@ -50,6 +52,9 @@ export class EventBus {
         this.connection = await amqp.connect(this.url);
         this.channel = await this.connection.createChannel();
         this.confirmChannel = await this.connection.createConfirmChannel();
+        this.confirmChannel.on('return', (msg) => {
+          if (msg.properties.messageId) this.returned.add(String(msg.properties.messageId));
+        });
         await this.channel.assertExchange(EXCHANGE, 'topic', { durable: true });
         await this.channel.assertQueue(DEAD_LETTER_QUEUE, { durable: true });
         await this.channel.prefetch(20);
@@ -74,16 +79,24 @@ export class EventBus {
   }
 
   /** Pubblica un lotto di eventi e attende la conferma del broker per tutti. */
-  async publish(...envelopes: EventEnvelope[]): Promise<void> {
+  /**
+   * Restituisce gli eventId che nessuna coda ha ricevuto (mandatory): succede all'avvio, quando chi li
+   * consuma non ha ancora creato la sua coda. Il relay dell'outbox li ripubblica poco dopo.
+   */
+  async publish(...envelopes: EventEnvelope[]): Promise<string[]> {
     if (!this.confirmChannel) throw new Error('EventBus non connesso');
     for (const envelope of envelopes) {
       this.confirmChannel.publish(EXCHANGE, envelope.type, Buffer.from(JSON.stringify(envelope)), {
         persistent: true,
         contentType: 'application/json',
         messageId: envelope.eventId,
+        mandatory: true,
       });
     }
+    // Il broker invia basic.return prima della conferma: dopo waitForConfirms l'elenco è completo.
     await this.confirmChannel.waitForConfirms();
+    const unroutable = envelopes.map((e) => e.eventId).filter((id) => this.returned.delete(id));
+    return unroutable;
   }
 
   /** Crea una coda durevole per il servizio e la lega ai tipi di evento richiesti. */
@@ -157,8 +170,12 @@ export async function addToOutbox(client: PoolClient | Pool, type: string, paylo
 }
 
 /** Inoltra periodicamente sul bus gli eventi dell'outbox non ancora pubblicati. */
+/** Per quanto si ritenta un evento che nessuna coda riceve: dopo, si considera senza destinatari. */
+const UNROUTABLE_RETRY_MS = 10 * 60_000;
+
 export function startOutboxRelay(pool: Pool, bus: EventBus, intervalMs = 500): NodeJS.Timeout {
   let running = false;
+  const nextTry = new Map<string, number>(); // eventi senza coda in attesa di un nuovo tentativo
   return setInterval(async () => {
     if (running) return;
     running = true;
@@ -169,15 +186,30 @@ export function startOutboxRelay(pool: Pool, bus: EventBus, intervalMs = 500): N
       if (!pending.rowCount) return;
       client = await pool.connect();
       await client.query('BEGIN');
+      const now = Date.now();
+      const waiting = [...nextTry].filter(([, at]) => at > now).map(([id]) => id);
+      // Quelli in attesa di un nuovo tentativo restano fuori, così non bloccano gli eventi successivi.
       const { rows } = await client.query(
         `SELECT id, type, payload, created_at FROM outbox
-         WHERE published_at IS NULL ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED`,
+         WHERE published_at IS NULL AND NOT (id = ANY($1::uuid[]))
+         ORDER BY created_at LIMIT 100 FOR UPDATE SKIP LOCKED`,
+        [waiting],
       );
-      await bus.publish(
-        ...rows.map((row) => ({ eventId: row.id, type: row.type, occurredAt: row.created_at.toISOString(), payload: row.payload })),
+      const due = rows;
+      const unroutable = new Set(
+        await bus.publish(
+          ...due.map((row) => ({ eventId: row.id, type: row.type, occurredAt: row.created_at.toISOString(), payload: row.payload })),
+        ),
       );
-      if (rows.length) {
-        await client.query('UPDATE outbox SET published_at = now() WHERE id = ANY($1)', [rows.map((r) => r.id)]);
+      // Un evento senza coda (es. al primo avvio il consumer non c'è ancora) si ritenta ogni 5 secondi
+      // per 10 minuti, poi si chiude: alcuni tipi di evento non hanno davvero destinatari.
+      const done = due.filter((r) => !unroutable.has(r.id) || now - r.created_at.getTime() > UNROUTABLE_RETRY_MS).map((r) => r.id);
+      for (const r of due) {
+        if (done.includes(r.id)) nextTry.delete(r.id);
+        else nextTry.set(r.id, now + 5000);
+      }
+      if (done.length) {
+        await client.query('UPDATE outbox SET published_at = now() WHERE id = ANY($1)', [done]);
       }
       await client.query('COMMIT');
     } catch (err) {
