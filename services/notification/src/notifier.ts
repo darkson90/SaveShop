@@ -1,10 +1,8 @@
-import { callService, serviceUrl, uuidv7 } from '@spesa/common';
+import { callService, radiusKm, serviceUrl, settings, uuidv7 } from '@spesa/common';
 import { Pool } from 'pg';
 import { AllowedStore, FrequentProduct, Offer, promosFrom, pushText, selectOffers } from './offers';
 import { PushSender } from './push';
 
-/** Un prodotto è "frequente" dopo almeno N aggiunte alla lista. */
-const MIN_TIMES_ADDED = Number(process.env.NOTIFY_MIN_TIMES_ADDED ?? 2);
 
 interface PricesUpdated {
   validFrom: string;
@@ -18,7 +16,8 @@ interface PricesUpdated {
  * quindi un evento consegnato due volte non genera una seconda push.
  */
 export async function notifyOffers(pool: Pool, sender: PushSender, payload: PricesUpdated): Promise<number> {
-  const promos = promosFrom(payload.prices ?? []);
+  if (!settings.get<boolean>('offers.enabled')) return 0; // interruttore generale dal pannello
+  const promos = promosFrom(payload.prices ?? [], settings.num('offers.minDiscountPct'));
   if (!promos.length) return 0;
 
   const { rows } = await pool.query(
@@ -26,7 +25,8 @@ export async function notifyOffers(pool: Pool, sender: PushSender, payload: Pric
      FROM user_frequent_products f
      JOIN preferences p ON p.user_id = f.user_id AND p.offers_enabled
      WHERE f.product_id = ANY($1) AND f.times_added >= $2`,
-    [[...new Set(promos.map((p) => p.productId))], MIN_TIMES_ADDED],
+    // Un prodotto è "frequente" dopo almeno N aggiunte alla lista (parametro offers.minTimesAdded).
+    [[...new Set(promos.map((p) => p.productId))], settings.num('offers.minTimesAdded')],
   );
   const byUser = new Map<string, FrequentProduct[]>();
   for (const r of rows) {
@@ -57,7 +57,7 @@ async function offersForUser(userId: string, frequent: FrequentProduct[], promos
   const [stores, cards] = await Promise.all([
     callService<{ items: AllowedStore[] }>(
       serviceUrl.store(),
-      `/internal/stores/allowed?lat=${profile.home.lat}&lng=${profile.home.lng}&radius_km=${profile.defaultRadiusKm}`,
+      `/internal/stores/allowed?lat=${profile.home.lat}&lng=${profile.home.lng}&radius_km=${radiusKm(profile.defaultRadiusKm)}`,
       { actingUser: userId },
     ),
     callService<{ chainIds: string[] }>(serviceUrl.user(), '/internal/users/me/loyalty-chains', { actingUser: userId }),
@@ -80,13 +80,11 @@ async function saveOffers(pool: Pool, userId: string, offers: Offer[], validFrom
   return fresh;
 }
 
-/** Al massimo una push ogni N ore per utente: un giro di raccolta prezzi arriva in più lotti. */
-const MIN_HOURS_BETWEEN_PUSHES = Number(process.env.NOTIFY_MIN_HOURS_BETWEEN_PUSHES ?? 12);
-
+/** Al massimo una push ogni N ore per utente (parametro offers.minHoursBetweenPushes): un giro di raccolta prezzi arriva in più lotti. */
 async function push(pool: Pool, sender: PushSender, userId: string, offers: Offer[]): Promise<void> {
   const recent = await pool.query(
     'SELECT 1 FROM notifications WHERE user_id = $1 AND pushed_at > now() - make_interval(hours => $2) LIMIT 1',
-    [userId, MIN_HOURS_BETWEEN_PUSHES],
+    [userId, settings.num('offers.minHoursBetweenPushes')],
   );
   if (recent.rowCount) return; // le offerte nuove restano visibili in "Offerte per te"
   const { rows } = await pool.query('SELECT token FROM devices WHERE user_id = $1', [userId]);

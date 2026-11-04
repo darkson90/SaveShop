@@ -21,4 +21,5 @@ export const serviceUrl = {
   pricing: () => env('PRICING_URL', 'http://pricing:3000'),
   analytics: () => env('ANALYTICS_URL', 'http://analytics:3000'),
   notification: () => env('NOTIFICATION_URL', 'http://notification:3000'),
+  config: () => env('CONFIG_URL', 'http://config:3000'),
 };

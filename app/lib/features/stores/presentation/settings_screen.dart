@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../app/providers.dart';
 import '../../auth/presentation/auth_controller.dart';
 import '../../offers/offers.dart';
+import '../../settings/public_config.dart';
 import '../data/stores_repository.dart';
 import 'stores_providers.dart';
 
@@ -100,7 +101,9 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     final profile = ref.watch(profileProvider).valueOrNull;
     final cards = ref.watch(loyaltyCardsProvider).valueOrNull ?? const <LoyaltyCard>[];
     final chains = {for (final c in ref.watch(chainsProvider).valueOrNull ?? const <Chain>[]) c.id: c.name};
-    final radius = _radius ?? profile?.defaultRadiusKm.toDouble() ?? 10;
+    // Il raggio massimo lo decide il pannello di amministrazione (geo.maxRadiusKm).
+    final maxRadius = (ref.watch(publicConfigProvider).valueOrNull?.maxRadiusKm ?? 25).toDouble();
+    final radius = (_radius ?? profile?.defaultRadiusKm.toDouble() ?? 10).clamp(1.0, maxRadius).toDouble();
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -110,8 +113,8 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         Slider(
           value: radius,
           min: 1,
-          max: 25,
-          divisions: 24,
+          max: maxRadius,
+          divisions: maxRadius.round() - 1,
           label: '${radius.round()} km',
           onChanged: (v) => setState(() => _radius = v),
           onChangeEnd: _saveRadius,

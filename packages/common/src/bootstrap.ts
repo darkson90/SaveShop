@@ -8,6 +8,7 @@ import { envInt } from './config';
 import { createPool, runMigrations, startMaintenance } from './db';
 import { EventBus, startOutboxRelay } from './events';
 import { ProblemFilter } from './http';
+import { settings } from './settings';
 
 export const PG_POOL = 'PG_POOL';
 export const EVENT_BUS = 'EVENT_BUS';
@@ -54,6 +55,8 @@ export async function bootstrap(appModule: (infra: Infra) => Type<unknown> | Dyn
   await runMigrations(pool, opts.migrationsDir ?? join(process.cwd(), 'migrations'));
   const bus = new EventBus();
   await bus.connect();
+  // I parametri del pannello: il Config Service ne è la fonte e li gestisce da sé.
+  if (opts.name !== 'config') await settings.start(bus);
   const infra = { pool, bus };
 
   const app = await NestFactory.create(appModule(infra) as any, { logger: ['error', 'warn', 'log'] });

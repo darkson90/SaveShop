@@ -23,6 +23,7 @@ import {
   PG_POOL,
   reqString,
   reqUuid,
+  settings,
   uuidv7,
   withTx,
 } from '@spesa/common';
@@ -66,7 +67,7 @@ export class UserController {
 
   @Patch('users/me')
   async update(@CurrentUser() user: AuthUser, @Body() body: any) {
-    const radius = optNumber(body.defaultRadiusKm, 'defaultRadiusKm', 1, 25);
+    const radius = optNumber(body.defaultRadiusKm, 'defaultRadiusKm', 1, settings.num('geo.maxRadiusKm'));
     const lat = optNumber(body.home?.lat, 'home.lat', -90, 90);
     const lng = optNumber(body.home?.lng, 'home.lng', -180, 180);
     if ((lat === undefined) !== (lng === undefined)) throw new BadRequestException('Indica sia home.lat sia home.lng');

@@ -29,7 +29,14 @@ export interface UnitPrice {
 
 export type Matrix = Map<string, Map<string, UnitPrice>>;
 
-export const round2 = (n: number) => Math.round(n * 100) / 100;
+/**
+ * Arrotonda ai centesimi come PostgreSQL (metà lontano da zero). Con Math.round(n * 100) 22,535 diventava
+ * 22,53 (in virgola mobile vale 22,534999…) mentre il database salvava 22,54: risparmio diverso di 1 cent.
+ */
+export const round2 = (n: number) => {
+  const r = Math.round(Math.abs(n) * 100 + 1e-7) / 100;
+  return n < 0 ? -r : r;
+};
 
 /** Il prezzo promo vale se non è riservato ai titolari di carta, o se l'utente ha la carta dell'insegna. */
 export function effectivePrice(row: PriceRow, hasCard: boolean): UnitPrice {
@@ -211,7 +218,8 @@ export function purchaseQuote(
     }
     return { productId: i.productId, quantity: i.quantity, unitPaid, unitReference, fromReceipt: i.productId in overrides };
   });
-  const saved = totalReference - comparablePaid;
+  // Dai totali già arrotondati: risparmio mostrato = differenza dei totali mostrati = valore nelle statistiche.
+  const saved = round2(round2(totalReference) - round2(comparablePaid));
   return {
     referenceStoreId: reference?.storeId ?? null,
     totalPaid: round2(totalPaid),

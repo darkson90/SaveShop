@@ -20,4 +20,5 @@ images:
   - { name: spesa-smart/pricing, newName: ghcr.io/OWNER/spesa-smart-pricing, newTag: latest }
   - { name: spesa-smart/analytics, newName: ghcr.io/OWNER/spesa-smart-analytics, newTag: latest }
   - { name: spesa-smart/notification, newName: ghcr.io/OWNER/spesa-smart-notification, newTag: latest }
+  - { name: spesa-smart/config, newName: ghcr.io/OWNER/spesa-smart-config, newTag: latest }
   - { name: spesa-smart/ingestion, newName: ghcr.io/OWNER/spesa-smart-ingestion, newTag: latest }

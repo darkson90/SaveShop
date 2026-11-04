@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { BadRequestException, Body, ConflictException, Controller, HttpCode, Inject, Post, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Body, ConflictException, Controller, ForbiddenException, HttpCode, Inject, Post, UnauthorizedException } from '@nestjs/common';
 import { hash, verify } from '@node-rs/argon2';
 import {
   addToOutbox,
@@ -9,14 +9,17 @@ import {
   PG_POOL,
   Public,
   reqString,
+  settings,
   signAccessToken,
   uuidv7,
   withTx,
 } from '@spesa/common';
 import { Pool, PoolClient } from 'pg';
 
-const REFRESH_TTL_DAYS = 30;
-const ACCESS_TTL_SECONDS = 15 * 60;
+/** Email degli amministratori (pannello dei parametri), separate da virgola. */
+const ADMIN_EMAILS = new Set(
+  (process.env.ADMIN_EMAILS ?? '').split(',').map((e) => e.trim().toLowerCase()).filter(Boolean),
+);
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
@@ -47,6 +50,9 @@ export class AuthController {
     const displayName = typeof body.displayName === 'string' ? body.displayName.slice(0, 80) : null;
     if (!EMAIL_RE.test(email)) throw new BadRequestException('Email non valida');
     if (password.length < 8) throw new BadRequestException('La password deve avere almeno 8 caratteri');
+    if (!settings.get<boolean>('auth.registrationOpen') && !ADMIN_EMAILS.has(email)) {
+      throw new ForbiddenException('Le registrazioni sono momentaneamente chiuse');
+    }
 
     const userId = uuidv7();
     const passwordHash = await hash(password); // argon2id, parametri di default della libreria
@@ -115,17 +121,21 @@ export class AuthController {
   }
 
   private async issueTokens(client: PoolClient, userId: string, email: string) {
+    const accessTtl = settings.num('auth.accessTokenMinutes') * 60;
+    const refreshDays = settings.num('auth.refreshTokenDays');
+    const role = ADMIN_EMAILS.has(email.toLowerCase()) ? 'admin' : undefined;
     const id = uuidv7();
     const secret = randomBytes(32).toString('base64url');
     await client.query(
       `INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at)
        VALUES ($1, $2, $3, now() + make_interval(days => $4))`,
-      [id, userId, sha256(secret), REFRESH_TTL_DAYS],
+      [id, userId, sha256(secret), refreshDays],
     );
     return {
       userId,
-      accessToken: signAccessToken({ userId, email }, this.privateKey, ACCESS_TTL_SECONDS),
-      expiresIn: ACCESS_TTL_SECONDS,
+      accessToken: signAccessToken({ userId, email, role }, this.privateKey, accessTtl),
+      expiresIn: accessTtl,
+      ...(role ? { role } : {}),
       refreshToken: `${id}.${secret}`,
     };
   }

@@ -14,13 +14,11 @@ import {
   Param,
   Post,
 } from '@nestjs/common';
-import { AuthUser, CurrentUser, EVENT_BUS, EventBus, PG_POOL, reqString, reqUuid, withTx } from '@spesa/common';
+import { AuthUser, CurrentUser, EVENT_BUS, EventBus, PG_POOL, reqString, reqUuid, settings, withTx } from '@spesa/common';
 import { Pool } from 'pg';
 import { listAccess, memberLabel, notifyChange, requireOwner } from './access';
 import { inviteUrl } from './invite-page';
 
-export const MAX_MEMBERS = 5;
-const INVITE_TTL_HOURS = 48;
 // Senza caratteri ambigui (0/O, 1/I/L): il codice si detta anche a voce.
 const ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 
@@ -36,7 +34,7 @@ export class ShareController {
     @Inject(EVENT_BUS) private readonly bus: EventBus,
   ) {}
 
-  /** Il proprietario genera un codice valido 48 ore; un nuovo codice revoca il precedente. */
+  /** Il proprietario genera un codice (validità: parametro lists.inviteTtlHours); un nuovo codice revoca il precedente. */
   @Post(':id/invites')
   async invite(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     await requireOwner(this.pool, user.userId, id);
@@ -48,9 +46,9 @@ export class ShareController {
           `INSERT INTO list_invites (code, list_id, created_by, expires_at)
            VALUES ($1, $2, $3, now() + make_interval(hours => $4))
            ON CONFLICT (code) DO NOTHING RETURNING expires_at`,
-          [code, id, user.userId, INVITE_TTL_HOURS],
+          [code, id, user.userId, settings.num('lists.inviteTtlHours')],
         );
-        if (res.rowCount) return { code, url: inviteUrl(code), expiresAt: res.rows[0].expires_at, maxMembers: MAX_MEMBERS };
+        if (res.rowCount) return { code, url: inviteUrl(code), expiresAt: res.rows[0].expires_at, maxMembers: settings.num('lists.maxMembers') };
       }
       throw new ConflictException('Riprova a generare il codice');
     });
@@ -73,7 +71,8 @@ export class ShareController {
       if (invite.status !== 'open') throw new ConflictException('Questa lista è già stata chiusa');
       const members = await client.query('SELECT user_id FROM list_members WHERE list_id = $1', [invite.list_id]);
       if (members.rows.some((m) => m.user_id === user.userId)) return invite.list_id; // già membro: idempotente
-      if (members.rowCount! >= MAX_MEMBERS) throw new ConflictException(`La lista ha già ${MAX_MEMBERS} membri`);
+      const max = settings.num('lists.maxMembers');
+      if (members.rowCount! >= max) throw new ConflictException(`La lista ha già ${max} membri`);
       await client.query(
         "INSERT INTO list_members (list_id, user_id, role, label) VALUES ($1, $2, 'editor', $3)",
         [invite.list_id, user.userId, memberLabel(user.email)],

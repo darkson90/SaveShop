@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { buildMatrix, singleStore, twoStores, perItem, purchaseQuote, effectivePrice } = require('../services/pricing/dist/engine.js');
+const { buildMatrix, singleStore, twoStores, perItem, purchaseQuote, effectivePrice, round2 } = require('../services/pricing/dist/engine.js');
 
 const stores = [
   { id: 'A', chainId: 'cA', name: 'Negozio A', distanceKm: 1 },
@@ -72,4 +72,12 @@ test('chiusura spesa: articoli assenti nel riferimento esclusi dal risparmio', (
   assert.equal(q.comparablePaid, 3.9); // latte + pane
   assert.equal(q.totalReference, 3.6);
   assert.equal(q.lines.find((l) => l.productId === 'caffe').unitReference, null);
+});
+
+test('arrotondamento ai centesimi come il database (metà lontano da zero)', () => {
+  assert.equal(round2(22.535), 22.54);
+  assert.equal(round2(1.005), 1.01);
+  assert.equal(round2(-1.005), -1.01);
+  assert.equal(round2(2.344), 2.34);
+  assert.equal(round2(0.1 + 0.2), 0.3);
 });

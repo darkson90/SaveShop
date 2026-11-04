@@ -88,6 +88,20 @@ http:
       rule: "PathPrefix(`/i/`) || PathPrefix(`/.well-known/assetlinks.json`) || PathPrefix(`/.well-known/apple-app-site-association`)"
       service: list
       middlewares: [strip-service-headers, rate-limit-public]
+    # Pannello parametri: la pagina e le sue API. Login con limite stretto per IP, il resto per utente.
+    admin-login:
+      rule: "Path(`/api/v1/admin/login`) || Path(`/api/v1/admin/refresh`)"
+      service: config
+      priority: 200
+      middlewares: [strip-service-headers, rate-limit-auth]
+    admin:
+      rule: "PathPrefix(`/api/v1/admin`) || Path(`/admin`) || PathPrefix(`/admin/`)"
+      service: config
+      middlewares: [strip-service-headers, rate-limit-public]
+    public-config:
+      rule: "PathPrefix(`/api/v1/config`)"
+      service: config
+      middlewares: [strip-service-headers, rate-limit-public]
     internal-blocked:
       rule: "PathPrefix(`/api/v1/internal`)"
       service: auth
@@ -103,3 +117,4 @@ http:
     pricing:   { loadBalancer: { servers: [{ url: "http://pricing:3000" }] } }
     analytics: { loadBalancer: { servers: [{ url: "http://analytics:3000" }] } }
     notification: { loadBalancer: { servers: [{ url: "http://notification:3000" }] } }
+    config:    { loadBalancer: { servers: [{ url: "http://config:3000" }] } }

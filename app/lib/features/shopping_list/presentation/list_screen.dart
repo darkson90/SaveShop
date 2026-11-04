@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../core/widgets/async_view.dart';
 import '../../../core/widgets/format.dart';
 import '../../offers/offers.dart';
+import '../../settings/public_config.dart';
 import '../domain/models.dart';
 import 'list_controller.dart';
 import 'share_screen.dart';
@@ -45,6 +46,7 @@ class ListScreen extends ConsumerWidget {
         ],
       ),
       body: Column(children: [
+        const AppNoticeBanner(),
         const Padding(padding: EdgeInsets.fromLTRB(16, 8, 16, 8), child: QuickAddField()),
         const _FrequentChips(),
         const Divider(height: 1),

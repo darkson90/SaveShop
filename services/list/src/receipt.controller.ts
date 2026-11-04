@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, HttpCode, Inject, Param, Post } from '@nestjs/common';
-import { AuthUser, callService, CurrentUser, PG_POOL, reqString, serviceUrl } from '@spesa/common';
+import { AuthUser, callService, CurrentUser, PG_POOL, reqString, serviceUrl, settings } from '@spesa/common';
 import { Pool } from 'pg';
 import { listAccess } from './access';
 import { matchLines, parseReceipt } from './receipt';
@@ -38,6 +38,7 @@ export class ReceiptController {
       parsed.lines,
       rows.map((r) => ({ itemId: r.id, label: r.label, productId: r.product_id })),
       catalog,
+      settings.num('receipts.minLineConfidence'),
     );
 
     const matchedIds = new Set(matches.filter(Boolean).map((m) => m!.itemId));

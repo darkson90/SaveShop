@@ -64,17 +64,17 @@ jobs:
         run: |
           ./scripts/gen-keys.sh
           ./scripts/dev-local.sh
-          for port in 3001 3002 3003 3004 3005 3006 3007 3008; do
+          for port in 3001 3002 3003 3004 3005 3006 3007 3008 3009; do
             timeout 60 bash -c "until curl -sf localhost:$port/ready >/dev/null; do sleep 1; done"
           done
 
       - name: Test end-to-end (con ingestion e notifiche)
         run: |
           pip install -r services/ingestion/requirements.txt
-          cd services/ingestion && SERVICE_TOKEN=dev-only-service-token CATALOG_URL=http://localhost:3004 \
+          cd services/ingestion && SERVICE_TOKEN=dev-only-service-token CONFIG_URL=http://localhost:3009 INGESTION_SOURCES=demo CATALOG_URL=http://localhost:3004 \
             STORE_URL=http://localhost:3003 AMQP_URL=amqp://guest:guest@localhost:5672 INGESTION_MODE=once \
             python -m ingestion && cd ../..
-          INGESTION_CMD="cd services/ingestion && SERVICE_TOKEN=dev-only-service-token CATALOG_URL=http://localhost:3004 STORE_URL=http://localhost:3003 AMQP_URL=amqp://guest:guest@localhost:5672 INGESTION_MODE=once python -m ingestion" \
+          INGESTION_SOURCES=demo INGESTION_CMD="cd services/ingestion && SERVICE_TOKEN=dev-only-service-token CONFIG_URL=http://localhost:3009 CATALOG_URL=http://localhost:3004 STORE_URL=http://localhost:3003 AMQP_URL=amqp://guest:guest@localhost:5672 INGESTION_MODE=once python -m ingestion" \
             npm run e2e
 
       - name: Test di latenza (informativo)
@@ -108,7 +108,7 @@ jobs:
     needs: backend
     strategy:
       matrix:
-        service: [auth, user, store, catalog, list, pricing, analytics, notification]
+        service: [auth, user, store, catalog, list, pricing, analytics, notification, config]
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3

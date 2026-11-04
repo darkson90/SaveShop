@@ -26,14 +26,14 @@ export interface Offer extends Promo {
   discountPct: number;
 }
 
-/** Sconto minimo perché un'offerta valga una notifica. */
-export const MIN_DISCOUNT_PCT = 10;
-
-/** Le offerte valide per un prezzo pieno e scontato: promo reale e sconto almeno del 10%. */
-export function promosFrom(prices: Array<{ storeId: string; productId: string; price: number; promoPrice?: number | null; loyaltyOnly?: boolean }>): Promo[] {
+/** Le offerte valide per un prezzo pieno e scontato: promo reale e sconto almeno di minDiscountPct (parametro offers.minDiscountPct). */
+export function promosFrom(
+  prices: Array<{ storeId: string; productId: string; price: number; promoPrice?: number | null; loyaltyOnly?: boolean }>,
+  minDiscountPct = 10,
+): Promo[] {
   return prices
     .filter((p) => p.promoPrice != null && p.promoPrice > 0 && p.promoPrice < p.price)
-    .filter((p) => ((p.price - p.promoPrice!) / p.price) * 100 >= MIN_DISCOUNT_PCT)
+    .filter((p) => ((p.price - p.promoPrice!) / p.price) * 100 >= minDiscountPct)
     .map((p) => ({ storeId: p.storeId, productId: p.productId, price: p.price, promoPrice: p.promoPrice!, loyaltyOnly: !!p.loyaltyOnly }));
 }
 

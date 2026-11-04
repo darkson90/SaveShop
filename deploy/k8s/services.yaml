@@ -1,4 +1,4 @@
-# Generato per gli 8 microservizi Node: Deployment + Service + HorizontalPodAutoscaler ciascuno.
+# Generato per i 9 microservizi Node: Deployment + Service + HorizontalPodAutoscaler ciascuno.
 # DATABASE_URL arriva dal Secret spesa-db (una chiave per servizio), vedi secrets.example.yaml.
 ---
 apiVersion: apps/v1
@@ -491,6 +491,68 @@ spec:
   scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: notification }
   minReplicas: 2
   maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }
+---
+# Config Service: parametri dell'app e pannello di amministrazione (/admin/). Carico minimo: i servizi
+# leggono i parametri a ogni modifica e ogni minuto, non a ogni richiesta.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: config
+  labels: { app.kubernetes.io/name: config, app.kubernetes.io/part-of: spesa-smart }
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app.kubernetes.io/name: config }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: config, app.kubernetes.io/part-of: spesa-smart }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 1000 }
+      containers:
+        - name: config
+          image: spesa-smart/config:latest
+          ports: [{ containerPort: 3000, name: http }]
+          envFrom: [{ configMapRef: { name: spesa-config } }]
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: spesa-db, key: config } }
+            - name: SERVICE_TOKEN
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: service-token } }
+            - name: AMQP_URL
+              valueFrom: { secretKeyRef: { name: spesa-internal, key: amqp-url } }
+          volumeMounts:
+            - { name: jwt, mountPath: /run/keys, readOnly: true }
+          readinessProbe: { httpGet: { path: /ready, port: http }, periodSeconds: 5, failureThreshold: 3 }
+          livenessProbe: { httpGet: { path: /health, port: http }, initialDelaySeconds: 20, periodSeconds: 10 }
+          resources:
+            requests: { cpu: 50m, memory: 96Mi }
+            limits: { memory: 256Mi }
+      volumes:
+        - name: jwt
+          secret:
+            secretName: spesa-jwt
+            items:
+              - { key: jwt-public.pem, path: jwt-public.pem }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: config
+spec:
+  selector: { app.kubernetes.io/name: config }
+  ports: [{ port: 3000, targetPort: http, name: http }]
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: config
+spec:
+  scaleTargetRef: { apiVersion: apps/v1, kind: Deployment, name: config }
+  minReplicas: 2
+  maxReplicas: 3
   metrics:
     - type: Resource
       resource: { name: cpu, target: { type: Utilization, averageUtilization: 70 } }

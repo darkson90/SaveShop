@@ -22,6 +22,7 @@ spesa-smart/
 │   ├── pricing/          # prezzi correnti, motore di confronto 1/2 negozi e per articolo
 │   ├── analytics/        # storico acquisti e metriche del profilo
 │   ├── notification/     # offerte sui prodotti frequenti: push FCM e casella "Offerte per te"
+│   ├── config/           # parametri modificabili a runtime e pannello di amministrazione (/admin/)
 │   └── ingestion/        # Python: raccolta prezzi e pubblicazione di PricesUpdated
 ├── infra/postgres/       # creazione di un database per servizio
 ├── scripts/              # chiavi JWT, avvio locale senza Docker
@@ -212,6 +213,29 @@ senza gateway; tempi in millisecondi:
 | Metriche del profilo | 2,6 | 35,1 |
 | Login (argon2, lento di proposito) | 16,3 | – |
 
+## Pannello parametri
+
+Una webapp di amministrazione per cambiare i parametri dell'app senza ridistribuire nulla: con Docker
+è su http://localhost:8080/admin/, senza Docker su http://localhost:3009/admin/.
+
+- **Accesso**: solo gli account le cui email sono in `ADMIN_EMAILS` (variabile dell'Auth Service; in
+  sviluppo `admin@saveshop.test`). L'account si registra normalmente, anche dall'app; il ruolo admin
+  arriva nel token. Agli altri il pannello e le sue API rispondono 403.
+- **Cosa si regola** (27 parametri in 9 sezioni): soglie di ricerca e riconoscimento dei prodotti,
+  raggio predefinito e massimo, età massima dei prezzi, durata delle cache, membri e validità degli
+  inviti, soglia dello scontrino, offerte (interruttore generale, sconto minimo, frequenza delle push),
+  statistiche, registrazioni aperte o chiuse, durata delle sessioni, fonti e area della raccolta
+  prezzi, avviso di manutenzione e versione minima dell'app. Ogni parametro è definito una volta sola in
+  `packages/common/src/settings.ts`, con limiti, unità e descrizione mostrati nel pannello.
+- **Applicazione immediata**: al salvataggio il Config Service manda il segnale `SettingsChanged` e
+  ogni servizio rilegge i valori in pochi secondi (comunque ogni minuto). Valore effettivo: quello del
+  pannello, altrimenti la variabile d'ambiente indicata, altrimenti il predefinito. Un valore riportato
+  al predefinito toglie la modifica.
+- **Sicurezza**: salvataggio tutto o niente con validazione sul server, registro di chi ha cambiato
+  cosa (conservato due anni), pagina con Content-Security-Policy restrittiva e niente script esterni.
+- **L'app** legge `GET /api/v1/config/public` all'avvio: mostra l'avviso di manutenzione, chiede di
+  aggiornare sotto la versione minima e adatta il cursore del raggio al massimo consentito.
+
 ## Endpoint aggiuntivi rispetto alle specifiche
 
 - `GET /lists/frequent-products`: alimenta i chip "Compri spesso".
@@ -221,6 +245,8 @@ senza gateway; tempi in millisecondi:
 - `GET /notifications`, `POST /notifications/read`: casella "Offerte per te".
 - `POST /lists/{id}/invites`, `POST /lists/join`, `GET /lists/{id}/members`, `DELETE /lists/{id}/members/{userId}`.
 - `GET /lists/{id}/live` (WebSocket) e `POST /lists/{id}/receipt`; `POST /lists/{id}/purchase` accetta `paidPrices`.
+- `GET /config/public` (senza accesso) e, per il pannello, `POST /admin/login`, `GET` / `PATCH /admin/settings`,
+  `GET /admin/audit`, `GET /admin/status`.
 
 ## Differenze dalle specifiche da conoscere
 
@@ -245,11 +271,13 @@ servizi gestiti in region UE. Creare i Secret come in `secrets.example.yaml`, ag
 
 - Backend: NestJS 12, nessuna vulnerabilità nota nelle dipendenze (`npm audit`, controllato anche in CI).
   Compilato con controlli TypeScript stretti e provato in locale su PostgreSQL 16 + PostGIS, RabbitMQ e
-  Redis; 31 unit test Node, 10 test Python dell'Ingestion e
+  Redis; 37 unit test Node, i test Python dell'Ingestion e
   il test end-to-end passano. Il percorso: registrazione → lista → blacklist → confronto → spesa →
   metriche → offerte notificate senza doppioni → endpoint interni protetti → lista condivisa con un
   secondo utente e aggiornamento via WebSocket → chiusura con lo scontrino → uscita del membro →
-  prezzi Open Prices (con un server che simula l'API) → feed partner → cancellazione account.
+  prezzi Open Prices (con un server che simula l'API) → feed partner → pannello parametri (accesso
+  negato ai non admin, modifica applicata subito dal List Service, registrazioni chiuse e riaperte,
+  registro, ripristino) → cancellazione account.
   Il test copre anche link d'invito, pagina di atterraggio e file `.well-known`, più i casi limite
   corretti nella revisione: token malformati, logout con segreto sbagliato, invii simultanei con la
   stessa chiave, chiusura contemporanea della spesa da due membri, negozio escluso dopo un confronto

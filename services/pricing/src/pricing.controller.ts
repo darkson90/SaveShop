@@ -5,26 +5,25 @@ import {
   BearerToken,
   callService,
   CurrentUser,
-  optNumber,
   PG_POOL,
+  radiusKm,
   reqNumber,
   reqUuid,
   serviceUrl,
+  settings,
 } from '@spesa/common';
 import type Redis from 'ioredis';
 import { Pool } from 'pg';
 import { buildMatrix, Item, perItem, PriceRow, purchaseQuote, singleStore, StoreInfo, twoStores } from './engine';
 
 export const REDIS = 'REDIS';
-const CACHE_TTL_SECONDS = 15 * 60;
 const MODES = ['single_store', 'two_stores', 'per_item'] as const;
 
 /**
  * Prezzi correnti: la riga aperta (valid_to NULL, servita dall'indice parziale) confermata da una
- * fonte negli ultimi PRICE_MAX_AGE_DAYS giorni. Un prezzo che nessuna fonte riporta più (offerta
+ * fonte negli ultimi N giorni (parametro pricing.priceMaxAgeDays). Un prezzo che nessuna fonte riporta più (offerta
  * finita, negozio sparito dal feed, segnalazione vecchia) smette di comparire nei confronti.
  */
-const MAX_AGE_DAYS = Number(process.env.PRICE_MAX_AGE_DAYS ?? 60);
 const CURRENT_PRICES_SQL = `
   SELECT store_id, product_id, price, promo_price, loyalty_only, COALESCE(observed_on, valid_from) AS observed_on
   FROM prices
@@ -90,7 +89,8 @@ export class PricingController {
           ? { ...base, results: twoStores(items, stores, matrix) }
           : { ...base, result: perItem(items, stores, matrix) };
 
-    await this.redis.set(key, JSON.stringify(result), 'EX', CACHE_TTL_SECONDS).catch(() => undefined);
+    const ttl = settings.num('pricing.comparisonCacheSeconds');
+    if (ttl > 0) await this.redis.set(key, JSON.stringify(result), 'EX', ttl).catch(() => undefined);
     return { ...result, cached: false };
   }
 
@@ -133,7 +133,7 @@ export class PricingController {
     return {
       lat: reqNumber(body.lat, 'lat', -90, 90),
       lng: reqNumber(body.lng, 'lng', -180, 180),
-      radiusKm: optNumber(body.radiusKm, 'radiusKm', 1, 25) ?? 10,
+      radiusKm: radiusKm(body.radiusKm),
     };
   }
 
@@ -155,7 +155,7 @@ export class PricingController {
   private async loadMatrix(context: { stores: StoreInfo[]; cards: Set<string> }, productIds: string[]) {
     const { stores, cards } = context;
     const { rows } = stores.length && productIds.length
-      ? await this.pool.query(CURRENT_PRICES_SQL, [productIds, stores.map((s) => s.id), MAX_AGE_DAYS])
+      ? await this.pool.query(CURRENT_PRICES_SQL, [productIds, stores.map((s) => s.id), settings.num('pricing.priceMaxAgeDays')])
       : { rows: [] as any[] };
     const prices: PriceRow[] = rows.map((r) => ({
       storeId: r.store_id,

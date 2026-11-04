@@ -1,7 +1,8 @@
-# Ambiente di sviluppo completo: gateway, 8 microservizi Node, ingestion Python,
+# Ambiente di sviluppo completo: gateway, 9 microservizi Node, ingestion Python,
 # PostgreSQL (un database per servizio), RabbitMQ e Redis.
 #   ./scripts/gen-keys.sh && docker compose up --build
-# API su http://localhost:8080/api/v1, console RabbitMQ su http://localhost:15672
+# API su http://localhost:8080/api/v1, pannello parametri su http://localhost:8080/admin/,
+# console RabbitMQ su http://localhost:15672
 
 x-node-service: &node-service
   build:
@@ -30,7 +31,7 @@ services:
     ports: ["8080:8080"]
     volumes:
       - ./gateway/dynamic.yml:/etc/traefik/dynamic.yml:ro
-    depends_on: [auth, user, store, catalog, list, pricing, analytics, notification]
+    depends_on: [auth, user, store, catalog, list, pricing, analytics, notification, config]
 
   auth:
     <<: *node-service
@@ -39,6 +40,8 @@ services:
       DATABASE_URL: postgres://spesa:spesa@postgres:5432/auth_db
       SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
       JWT_PRIVATE_KEY_FILE: /run/keys/jwt-private.pem
+      # Account che possono entrare nel pannello parametri (separati da virgola).
+      ADMIN_EMAILS: ${ADMIN_EMAILS:-admin@saveshop.test}
     volumes:
       - ./keys/jwt-public.pem:/run/keys/jwt-public.pem:ro
       - ./keys/jwt-private.pem:/run/keys/jwt-private.pem:ro
@@ -97,6 +100,14 @@ services:
       SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
       # Con un account di servizio Firebase le push partono davvero; senza, finiscono nel log.
       # FCM_SERVICE_ACCOUNT_FILE: /run/secrets/fcm.json
+
+  # Parametri dell'app modificabili a runtime e pannello di amministrazione (/admin/).
+  config:
+    <<: *node-service
+    build: { context: ., dockerfile: docker/node.Dockerfile, args: { SERVICE: config } }
+    environment:
+      DATABASE_URL: postgres://spesa:spesa@postgres:5432/config_db
+      SERVICE_TOKEN: ${SERVICE_TOKEN:-dev-only-service-token}
 
   ingestion:
     build: ./services/ingestion

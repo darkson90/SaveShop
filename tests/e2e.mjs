@@ -8,7 +8,7 @@ import { createServer } from 'node:http';
 import WebSocket from 'ws';
 
 const GATEWAY = process.env.GATEWAY_URL;
-const PORTS = { auth: 3001, user: 3002, store: 3003, catalog: 3004, list: 3005, pricing: 3006, analytics: 3007, notification: 3008 };
+const PORTS = { auth: 3001, user: 3002, store: 3003, catalog: 3004, list: 3005, pricing: 3006, analytics: 3007, notification: 3008, config: 3009 };
 const base = (svc) => GATEWAY ?? `http://localhost:${PORTS[svc]}`;
 const HOME = { lat: 46.419, lng: 12.245 }; // Vodo di Cadore, coerente con i dati seed
 
@@ -332,6 +332,61 @@ if (process.env.INGESTION_CMD) {
   });
   assert.equal(piavePrices[0].unitPrice, 4.2);
   step(`feed partner: "${partner.name}" con "${piave.name}" a ${piavePrices[0].unitPrice} €`);
+}
+
+// 10. Pannello parametri: riservato agli amministratori, modifiche applicate dai servizi senza riavvio
+{
+  const ADMIN = { email: process.env.ADMIN_EMAIL ?? 'admin@saveshop.test', password: process.env.ADMIN_PASSWORD ?? 'password-admin' };
+  await api('config', '/admin/settings', { expect: [403] }); // utente normale
+  await api('config', '/admin/login', { method: 'POST', body: { email, password: 'password-sicura' }, expect: [403] });
+  await api('auth', '/auth/register', { method: 'POST', body: ADMIN, expect: [201, 409] });
+  const admin = { as: (await api('config', '/admin/login', { method: 'POST', body: ADMIN })).accessToken };
+  const all = await api('config', '/admin/settings', admin);
+  assert.ok(all.groups.length >= 5 && all.settings.length >= 20);
+  const leftovers = all.settings.filter((s) => s.modified).map((s) => s.key);
+  if (leftovers.length) await api('config', '/admin/settings', { method: 'PATCH', body: { reset: leftovers }, ...admin });
+
+  // Tutto o niente: un valore non valido blocca anche quelli validi.
+  const bad = await fetch(`${base('config')}/api/v1/admin/settings`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${admin.as}` },
+    body: JSON.stringify({ values: { 'lists.inviteTtlHours': 6, 'lists.maxMembers': 0 } }),
+  });
+  assert.equal(bad.status, 400);
+  const badBody = await bad.json();
+  assert.match(badBody.detail ?? badBody.message ?? '', /membri/i);
+  assert.equal((await api('config', '/admin/settings', admin)).settings.find((s) => s.key === 'lists.inviteTtlHours').modified, false);
+
+  // Validità degli inviti: il List Service la applica appena riceve il segnale.
+  await api('config', '/admin/settings', { method: 'PATCH', body: { values: { 'lists.inviteTtlHours': 6 } }, ...admin });
+  const ttl = await eventually(async () => {
+    const inv = await api('list', `/lists/${shared.id}/invites`, { method: 'POST' });
+    const hours = (new Date(inv.expiresAt).getTime() - Date.now()) / 3.6e6;
+    assert.ok(hours > 5.5 && hours < 6.5, `scadenza invito tra ${hours.toFixed(1)} h`);
+    return hours;
+  });
+
+  // Registrazioni chiuse e avviso nell'app.
+  await api('config', '/admin/settings', { method: 'PATCH', body: { values: { 'auth.registrationOpen': false, 'app.maintenanceMessage': 'Manutenzione stasera alle 22' } }, ...admin });
+  await eventually(() => api('auth', '/auth/register', { method: 'POST', body: { email: `chiuso+${Date.now()}@example.com`, password: 'password-sicura' }, expect: [403] }));
+  const pub = await api('config', '/config/public', { as: '' });
+  assert.equal(pub.values['app.maintenanceMessage'], 'Manutenzione stasera alle 22');
+  const audit = await api('config', '/admin/audit?limit=5', admin);
+  assert.equal(audit.items[0].changedBy, ADMIN.email);
+  assert.ok(audit.items.some((i) => i.key === 'lists.inviteTtlHours' && i.newValue === 6 && i.wasDefault));
+
+  // Ripristino dei predefiniti.
+  const restored = await api('config', '/admin/settings', { method: 'PATCH', body: { reset: ['lists.inviteTtlHours', 'auth.registrationOpen', 'app.maintenanceMessage'] }, ...admin });
+  assert.ok(restored.settings.every((s) => !s.modified));
+  await eventually(() => api('auth', '/auth/register', { method: 'POST', body: { email: `aperto+${Date.now()}@example.com`, password: 'password-sicura' }, expect: [201] }));
+
+  const status = await api('config', '/admin/status', admin);
+  assert.ok(status.services.every((s) => s.ok), `servizi non attivi: ${status.services.filter((s) => !s.ok).map((s) => s.name)}`);
+  const page = await fetch(`${base('config')}/admin/`);
+  assert.equal(page.status, 200);
+  assert.match(page.headers.get('content-security-policy') ?? '', /frame-ancestors 'none'/);
+  assert.ok((await page.text()).includes('app.js'));
+  step(`pannello parametri: solo admin, inviti a ${Math.round(ttl)} h applicati subito, registrazioni chiuse e riaperte, ${status.services.length} servizi attivi`);
 }
 
 // 11. Ripristino negozio e cancellazione account

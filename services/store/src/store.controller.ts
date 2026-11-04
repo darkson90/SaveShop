@@ -17,7 +17,7 @@ import {
   AuthUser,
   CurrentUser,
   Events,
-  optNumber,
+  radiusKm,
   PG_POOL,
   ServiceOnly,
   reqNumber,
@@ -184,7 +184,7 @@ export class StoreController {
   private async findAllowed(userId: string, q: any) {
     const lat = reqNumber(q.lat, 'lat', -90, 90);
     const lng = reqNumber(q.lng, 'lng', -180, 180);
-    const radius = optNumber(q.radius_km ?? q.radiusKm, 'radius_km', 1, 25) ?? 10;
+    const radius = radiusKm(q.radius_km ?? q.radiusKm);
     const { rows } = await this.pool.query(NEARBY_SQL, [lat, lng, radius, userId]);
     return rows.map(toStore);
   }

@@ -26,10 +26,12 @@ import {
   optNumber,
   pageParams,
   PG_POOL,
+  radiusKm,
   reqNumber,
   reqString,
   reqUuid,
   serviceUrl,
+  settings,
   uuidv7,
   withTx,
 } from '@spesa/common';
@@ -37,8 +39,6 @@ import { Pool } from 'pg';
 import { listAccess, memberLabel, notifyChange, requireOwner } from './access';
 import { parseInput } from './parser';
 
-/** Sotto questa confidenza la voce resta "libera" e l'app propone di sceglierne il prodotto. */
-const MIN_MATCH_CONFIDENCE = 0.45;
 
 function toItem(r: any) {
   return {
@@ -191,7 +191,8 @@ export class ListController {
       const match = await callService<any>(serviceUrl.catalog(), `/internal/products/match?q=${encodeURIComponent(parsed.text)}`, {
         asService: true,
       });
-      if (match.product && match.confidence >= MIN_MATCH_CONFIDENCE) {
+      // Sotto la soglia la voce resta "libera" e l'app propone di sceglierne il prodotto.
+      if (match.product && match.confidence >= settings.num('lists.minMatchConfidence')) {
         product = match.product;
         confidence = match.confidence;
         // "spaghetti 500 g": la grammatura descrive la confezione, non la quantità da comprare.
@@ -293,7 +294,7 @@ export class ListController {
     const storeId = reqUuid(body.storeId, 'storeId');
     const lat = reqNumber(body.lat, 'lat', -90, 90);
     const lng = reqNumber(body.lng, 'lng', -180, 180);
-    const radiusKm = optNumber(body.radiusKm, 'radiusKm', 1, 25) ?? 10;
+    const radius = radiusKm(body.radiusKm);
 
     const { rows: items } = await this.pool.query(
       'SELECT id, product_id, quantity FROM list_items WHERE list_id = $1 AND product_id IS NOT NULL',
@@ -313,7 +314,7 @@ export class ListController {
       token,
       actingUser: token ? undefined : user.userId,
       body: {
-        storeId, lat, lng, radiusKm, overrides,
+        storeId, lat, lng, radiusKm: radius, overrides,
         items: items.map((i) => ({ productId: i.product_id, quantity: Number(i.quantity) })),
       },
     });

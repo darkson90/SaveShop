@@ -1,12 +1,10 @@
 import { BadRequestException, Controller, Get, Inject, Query } from '@nestjs/common';
-import { AuthUser, CurrentUser, PG_POOL } from '@spesa/common';
+import { AuthUser, CurrentUser, PG_POOL, settings } from '@spesa/common';
 import type Redis from 'ioredis';
 import { Pool } from 'pg';
 
 export const REDIS = 'REDIS';
 export const statsVersionKey = (userId: string) => `stats:${userId}:version`;
-const CACHE_TTL_SECONDS = 10 * 60;
-const MAX_SLICES = 6;
 
 /** Inizio del periodo: mese corrente, ultimi 3 mesi, ultimi 12 mesi, sempre. */
 const PERIOD_START: Record<string, string> = {
@@ -91,7 +89,7 @@ export class AnalyticsController {
     const total = rows.reduce((s, r) => s + Number(r.spent), 0);
     // Le categorie oltre la sesta confluiscono in "Altro", insieme a un'eventuale "Altro" già presente.
     const named = rows.filter((r) => r.category !== 'Altro');
-    const head = named.slice(0, MAX_SLICES);
+    const head = named.slice(0, settings.num('stats.maxCategorySlices'));
     const otherTotal = total - head.reduce((s, r) => s + Number(r.spent), 0);
     const slices = head.map((r) => ({ category: r.category as string, spent: Number(r.spent) }));
     if (otherTotal > 0.004) slices.push({ category: 'Altro', spent: otherTotal });
@@ -113,7 +111,8 @@ export class AnalyticsController {
     const hit = await this.redis.get(key).catch(() => null);
     if (hit) return JSON.parse(hit);
     const value = await compute();
-    await this.redis.set(key, JSON.stringify(value), 'EX', CACHE_TTL_SECONDS).catch(() => undefined);
+    const ttl = settings.num('stats.cacheSeconds');
+    if (ttl > 0) await this.redis.set(key, JSON.stringify(value), 'EX', ttl).catch(() => undefined);
     return value;
   }
 }

@@ -4,6 +4,7 @@ import {
   CanActivate,
   createParamDecorator,
   ExecutionContext,
+  ForbiddenException,
   Injectable,
   SetMetadata,
   UnauthorizedException,
@@ -15,6 +16,8 @@ import { env } from './config';
 export interface AuthUser {
   userId: string;
   email: string;
+  /** "admin" per gli amministratori (email in ADMIN_EMAILS dell'Auth Service). */
+  role?: string;
 }
 
 const ISSUER = 'spesa-smart-auth';
@@ -27,7 +30,7 @@ function getPublicKey(): string {
 
 /** Firma un access token RS256 (usato solo dall'Auth Service, unico detentore della chiave privata). */
 export function signAccessToken(user: AuthUser, privateKey: string, ttlSeconds = 15 * 60): string {
-  return jwt.sign({ email: user.email }, privateKey, {
+  return jwt.sign({ email: user.email, ...(user.role ? { role: user.role } : {}) }, privateKey, {
     algorithm: 'RS256',
     subject: user.userId,
     issuer: ISSUER,
@@ -38,12 +41,16 @@ export function signAccessToken(user: AuthUser, privateKey: string, ttlSeconds =
 
 export function verifyAccessToken(token: string): AuthUser {
   const claims = jwt.verify(token, getPublicKey(), { algorithms: ['RS256'], issuer: ISSUER }) as jwt.JwtPayload;
-  return { userId: String(claims.sub), email: String(claims.email) };
+  return { userId: String(claims.sub), email: String(claims.email), ...(claims.role ? { role: String(claims.role) } : {}) };
 }
 
 export const IS_PUBLIC = 'isPublic';
 /** Marca un endpoint come accessibile senza JWT (login, registrazione, health). */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
+
+export const ADMIN_ONLY = 'adminOnly';
+/** Endpoint riservato agli amministratori (token con role "admin"). */
+export const AdminOnly = () => SetMetadata(ADMIN_ONLY, true);
 
 export const SERVICE_ONLY = 'serviceOnly';
 /** Endpoint chiamabile solo da un altro servizio con il token di servizio (mai da un utente). */
@@ -93,10 +100,13 @@ export class JwtAuthGuard implements CanActivate {
     try {
       req.user = verifyAccessToken(header.slice(7));
       req.token = header.slice(7);
-      return true;
     } catch {
       throw new UnauthorizedException('Token non valido o scaduto');
     }
+    if (this.reflector.getAllAndOverride<boolean>(ADMIN_ONLY, targets) && req.user.role !== 'admin') {
+      throw new ForbiddenException('Riservato agli amministratori');
+    }
+    return true;
   }
 }
 

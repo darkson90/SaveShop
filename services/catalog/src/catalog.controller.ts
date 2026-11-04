@@ -1,5 +1,5 @@
 import { BadRequestException, Body, Controller, Get, HttpCode, Inject, NotFoundException, Param, Post, Query } from '@nestjs/common';
-import { addToOutbox, Events, optNumber, PG_POOL, reqString, reqUuid, ServiceOnly, uuidv7, withTx } from '@spesa/common';
+import { addToOutbox, Events, optNumber, PG_POOL, reqString, reqUuid, ServiceOnly, settings, uuidv7, withTx } from '@spesa/common';
 import { mapCategory, packageSize } from './categories';
 import { Pool } from 'pg';
 
@@ -31,23 +31,23 @@ const SEARCH_SQL = `
   JOIN products p ON p.id = cand.product_id
   JOIN categories c ON c.id = p.category_id
   GROUP BY p.id, c.name
-  HAVING MAX(cand.score) >= 0.3
+  HAVING MAX(cand.score) >= $3
   ORDER BY score DESC, p.popularity DESC
   LIMIT $2`;
 
 /**
  * Cache in memoria dei risultati di ricerca: i prefissi più digitati ("la", "lat", "mo"…) sono gli
- * stessi per tutti e il catalogo cambia di rado (giro notturno dell'Ingestion). 5 minuti, 5000 voci,
+ * stessi per tutti e il catalogo cambia di rado (giro notturno dell'Ingestion). Durata dal parametro
+ * catalog.searchCacheSeconds (5 minuti), 5000 voci,
  * svuotata quando questa istanza crea prodotti nuovi; le altre repliche si allineano alla scadenza.
  */
-const SEARCH_TTL_MS = 5 * 60 * 1000;
 const SEARCH_MAX_ENTRIES = 5000;
 const searchCache = new Map<string, { at: number; rows: any[] }>();
 
 function cacheGet(key: string): any[] | undefined {
   const hit = searchCache.get(key);
   if (!hit) return undefined;
-  if (Date.now() - hit.at > SEARCH_TTL_MS) {
+  if (Date.now() - hit.at > settings.num('catalog.searchCacheSeconds') * 1000) {
     searchCache.delete(key);
     return undefined;
   }
@@ -90,11 +90,12 @@ export class CatalogController {
   private async search(terms: string[], limit: number): Promise<any[][]> {
     return Promise.all(
       terms.map(async (term) => {
-        const key = `${limit}:${term.toLowerCase()}`;
+        const minScore = settings.num('catalog.minSearchScore');
+        const key = `${limit}:${minScore}:${term.toLowerCase()}`;
         const cached = cacheGet(key);
         if (cached) return cached;
-        const { rows } = await this.pool.query(SEARCH_SQL, [term, limit]);
-        cacheSet(key, rows);
+        const { rows } = await this.pool.query(SEARCH_SQL, [term, limit, minScore]);
+        if (settings.num('catalog.searchCacheSeconds') > 0) cacheSet(key, rows);
         return rows;
       }),
     );

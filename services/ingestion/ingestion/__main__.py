@@ -20,27 +20,53 @@ STORE_URL = os.environ.get("STORE_URL", "http://store:3000")
 SERVICE_TOKEN = os.environ.get("SERVICE_TOKEN", "")
 EXCHANGE = "spesa.events"
 BATCH_SIZE = 500
-# Fonti attive, separate da virgola: "demo" (listini dimostrativi), "open_prices" (prezzi reali),
-# "feeds" (listini dei negozi partner, vedi INGESTION_FEEDS).
-SOURCES = os.environ.get("INGESTION_SOURCES", "demo")
+CONFIG_URL = os.environ.get("CONFIG_URL", "http://config:3000")
 
 
-def build_sources() -> list[Source]:
+def panel_settings() -> dict:
+    """Parametri impostati dal pannello di amministrazione; vuoto se il Config Service non risponde."""
+    try:
+        return get_json(f"{CONFIG_URL}/api/v1/internal/settings", retries=3)["values"]
+    except Exception as exc:  # senza pannello valgono variabili d'ambiente e predefiniti
+        print(f"[ingestion] parametri del pannello non disponibili ({exc}): uso l'ambiente", flush=True)
+        return {}
+
+
+def setting(values: dict, key: str, env: str, default, cast=str):
+    """Valore effettivo: pannello, poi variabile d'ambiente, poi predefinito (come nei servizi Node)."""
+    if key in values:
+        return values[key]
+    raw = os.environ.get(env)
+    if raw not in (None, ""):
+        try:
+            return cast(raw)
+        except ValueError:
+            print(f"[ingestion] {env} non valido: {raw!r}", flush=True)
+    return default
+
+
+def as_list(raw: str) -> list[str]:
+    return [x.strip() for x in raw.split(",") if x.strip()]
+
+
+def build_sources(values: dict | None = None) -> list[Source]:
+    """Fonti attive (parametro ingestion.sources): demo, open_prices, feeds."""
+    values = panel_settings() if values is None else values
     sources: list[Source] = []
-    for name in (s.strip() for s in SOURCES.split(",")):
+    for name in setting(values, "ingestion.sources", "INGESTION_SOURCES", ["demo", "open_prices"], as_list):
         if name == "demo":
             sources.append(DemoSource())
         elif name == "open_prices":
             sources.append(OpenPricesSource(
-                lat=float(os.environ.get("OPEN_PRICES_LAT", "46.14")),    # Belluno e dintorni
-                lon=float(os.environ.get("OPEN_PRICES_LON", "12.22")),
-                radius_km=float(os.environ.get("OPEN_PRICES_RADIUS_KM", "40")),
-                days=int(os.environ.get("OPEN_PRICES_DAYS", "60")),
+                lat=float(setting(values, "ingestion.openPricesLat", "OPEN_PRICES_LAT", 46.14, float)),  # Belluno
+                lon=float(setting(values, "ingestion.openPricesLon", "OPEN_PRICES_LON", 12.22, float)),
+                radius_km=float(setting(values, "ingestion.openPricesRadiusKm", "OPEN_PRICES_RADIUS_KM", 40, float)),
+                days=int(setting(values, "ingestion.openPricesDays", "OPEN_PRICES_DAYS", 60, int)),
             ))
         elif name == "feeds":
-            # URL o percorsi dei feed dei negozi partner, separati da virgola (docs/feed-format.md).
-            sources.append(FeedSource([x.strip() for x in os.environ.get("INGESTION_FEEDS", "").split(",")]))
-        elif name:
+            # URL o percorsi dei feed dei negozi partner (docs/feed-format.md).
+            sources.append(FeedSource(setting(values, "ingestion.feeds", "INGESTION_FEEDS", [], as_list)))
+        else:
             print(f"[ingestion] fonte sconosciuta ignorata: {name}", flush=True)
     return sources
 

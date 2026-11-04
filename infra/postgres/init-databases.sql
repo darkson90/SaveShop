@@ -7,3 +7,4 @@ CREATE DATABASE list_db;
 CREATE DATABASE pricing_db;
 CREATE DATABASE analytics_db;
 CREATE DATABASE notification_db;
+CREATE DATABASE config_db;

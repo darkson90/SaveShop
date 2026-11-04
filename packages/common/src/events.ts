@@ -25,6 +25,8 @@ export const Events = {
   PricesUpdated: 'PricesUpdated',
   /** Segnale effimero via broadcast(): una lista condivisa è cambiata. */
   ListChanged: 'ListChanged',
+  /** Segnale effimero via broadcast(): un parametro è stato modificato dal pannello. */
+  SettingsChanged: 'SettingsChanged',
 } as const;
 
 type Handler = (event: EventEnvelope<any>) => Promise<void>;

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>SaveShop · Parametri</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M4 6h15l9 10-9 10H4z' fill='%23FFD43B' stroke='%2317231D' stroke-width='2'/%3E%3Ccircle cx='10' cy='16' r='2.5' fill='%2317231D'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <!-- Accesso -->
+  <main id="login" class="login" hidden>
+    <form id="login-form" class="login-box" novalidate>
+      <div class="brand"><span class="brand-tag" aria-hidden="true"></span>SaveShop</div>
+      <h1>Parametri dell'app</h1>
+      <p class="muted">Accedi con un account amministratore.</p>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="error" role="alert"></p>
+      <button type="submit" class="btn primary">Accedi</button>
+    </form>
+  </main>
+
+  <!-- Pannello -->
+  <div id="panel" class="panel" hidden>
+    <header class="topbar">
+      <button id="menu-toggle" class="btn ghost menu-toggle" aria-expanded="false" aria-controls="sidebar">Sezioni</button>
+      <div class="brand"><span class="brand-tag" aria-hidden="true"></span>SaveShop <span class="muted">parametri</span></div>
+      <div class="search">
+        <label for="search" class="sr-only">Cerca un parametro</label>
+        <input id="search" type="search" placeholder="Cerca un parametro" autocomplete="off">
+      </div>
+      <div class="who"><span id="who"></span><button id="logout" class="btn ghost">Esci</button></div>
+    </header>
+
+    <nav id="sidebar" class="sidebar" aria-label="Sezioni"></nav>
+
+    <main id="content" class="content" tabindex="-1"></main>
+
+    <div id="savebar" class="savebar" hidden role="region" aria-label="Modifiche non salvate">
+      <span id="savebar-text"></span>
+      <span class="savebar-actions">
+        <button id="discard" class="btn ghost">Annulla</button>
+        <button id="save" class="btn primary">Salva modifiche</button>
+      </span>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>
