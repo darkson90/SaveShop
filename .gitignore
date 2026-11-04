@@ -13,3 +13,6 @@ app/.flutter-plugins*
 app/ios/Pods/
 app/pubspec.lock
 .logs/
+
+# Dati locali di Redis durante i test
+dump.rdb
